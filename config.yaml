@@ -1,0 +1,25 @@
+dataset:
+  name: Kodak
+  bands: [1, 2, 3]
+  subset_size: 2000
+  subset_size_test: 400
+
+dataloader:
+  batch_size: 1
+  num_workers: 6
+  pin_memory: True
+  shuffle: False
+
+training:
+  lmbda: 0.25 #Bit-rate distortion parameter 
+  lr: 0.0005
+  optim: "Adam"
+  lr_aux: .0005
+  optim_aux: "Adam"
+  epochs: 2
+  clip_max_norm: 1.0
+  
+randomseed: 4321
+ #4321
+  
+

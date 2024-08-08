@@ -1,23 +1,14 @@
 import os
-import argparse
-import yaml
-import attrs as attr
+from typing import Any, Dict
 import torch
 from torchvision import transforms
 from torchgeo.datasets import BigEarthNet
-import torch.nn as nn
-from torch.utils.data import DataLoader
-
-from typing import Any, Dict, Optional
 
 class DictTransforms:
-    def __init__(self,
-                 dict_transform : dict,
-                 ):
+    def __init__(self,dict_transform : dict,):
         self.dict_transform = dict_transform
 
     def __call__(self, sample):
-        # Apply your transforms to the 'image' key
         for key, function in self.dict_transform.items():
             sample[key] = function(sample[key])
         return sample
@@ -42,82 +33,58 @@ class ConvertType:
 
     def __call__(self, tensor):
         return tensor.to(self.dtype)
+def load_config(config_path):
+    """Load configuration from a YAML file."""
+    with open(config_path, 'r') as file:
+        return yaml.safe_load(file)
 
+def normalize(sample: Dict[str, Any], maxs: torch.Tensor, mins: torch.Tensor) -> Dict[str, Any]:
+    """Normalize a single sample from the Dataset."""
+    sample = sample.float()
+    sample = (sample - mins) / (maxs - mins)
+    sample = torch.clip(sample, min=0.0, max=1.0)
+    return sample
 
-def preprocess(sample: Dict[str, Any]) -> Dict[str, Any]:
-        maxs = torch.tensor(
-        [
-            10000.0,
-            10000.0,
-            10000.0,
-            # 10000.0,
-            # 10000.0,
-            # 10000.0,
-            # 10000.0,
-            # 10000.0,
-            # 10000.0,
-            # 10000.0,
-            # 10000.0,
-            # 10000.0,
-           
-        ]
-        ).unsqueeze(1).unsqueeze(1)
-        mins = torch.tensor(
-            [
-                0.0,
-                0.0,
-                0.0,
-                # 0.0,
-                # 0.0,
-                # 0.0,
-                # 0.0,
-                # 0.0,
-                # 0.0,
-                # 0.0,
-                # 0.0,
-                # 0.0,
-            
-            ]
-        ).unsqueeze(1).unsqueeze(1)
-        """Transform a single sample from the Dataset."""
-       
-        sample = sample.float()
-        sample = (sample - mins) / (maxs - mins)
-        sample = torch.clip(sample, min=0.0, max=1.0)
-        return sample
-
-def init_bigearthnet(cfg, *args, **kwargs):
+def init_bigearthnet(cfg_path, bands):
     """
-    Init BigEarthNet dataset, with S2 data and 43 classes as default.
+    Initialize the BigEarthNet dataset with specified configuration.
     """
-    # Get dataset parameters
+    # Load configuration
+    print(os.path)
+    cfg = load_config(cfg_path)
+
+    # Get dataset parameters from the configuration
     split = cfg['dataset']['split']
     satellite = cfg['dataset']['satellite'] if 'satellite' in cfg['dataset'] else 's2'
+    resize = cfg['dataset']['resize']
 
-    # Get BigEarthNet directory
+    # Get the directory for BigEarthNet data, defaulting to 'data' if not set
     DATA_DIR = os.getenv('DATA_DIR', 'data')
     bigearthnet_dir = os.path.join(DATA_DIR, 'BigEarthNet')
 
-    # Check if data is downloaded
+    # Check if the BigEarthNet data directory exists
     assert os.path.isdir(os.path.join(bigearthnet_dir, BigEarthNet.metadata['s2']['directory'])), \
-        "Download BigEarthNet with `sh datasets/bigearthnet_download.sh` or specify the DATA_DIR via a env variable."
+        "Download BigEarthNet with `sh datasets/bigearthnet_download.sh` or specify the DATA_DIR via an env variable."
 
-    # Init transforms
+    # Initialize image transformations
     image_transforms = [
-        SelectChannels(cfg['dataset']['bands']),
-        ConvertType(torch.float),
-        transforms.Resize((128,128)),
+        SelectChannels(bands),          # Select specified bands
+        ConvertType(torch.float),       # Convert data type to float
+        transforms.Resize(tuple(resize)), # Resize images to specified dimensions
     ]
 
+    # If normalization is specified in the configuration, add it as preprocessing step
     if cfg['dataset']['normalize']:
-      # Normalize images
-      
-        image_transforms.append(preprocess)
-        #image_transforms.append(Unsqueeze(dim=1))  # add time dim
+        # Extract max and min values for the specified bands
+        maxs = torch.tensor([cfg['preprocess']['maxs'][i] for i in bands]).unsqueeze(1).unsqueeze(1)
+        mins = torch.tensor([cfg['preprocess']['mins'][i] for i in bands]).unsqueeze(1).unsqueeze(1)
+        image_transforms.append(lambda sample: normalize(sample, maxs, mins))
 
+
+    # Wrap the transformations in a dictionary-based transform
     transforms_bigearth = DictTransforms({'image': transforms.Compose(image_transforms)})
 
-    # Init dataset
+    # Initialize the BigEarthNet dataset with the specified parameters and transformations
     dataset = BigEarthNet(
         root=bigearthnet_dir,
         split=split,
@@ -125,24 +92,5 @@ def init_bigearthnet(cfg, *args, **kwargs):
         num_classes=cfg['dataset']['num_classes'],
         transforms=transforms_bigearth,
     )
-    print("Success")
-    print(dataset[1])
-    print("Success2")
 
-
-    return dataset
-
-
-# OLD
-# def load_dataset(cfg):
-#     # load settings from cfg
-#     dataset_name = cfg['dataset']['name']
-#     logging.info(f"Load dataset {dataset_name} ({cfg['dataset']['split']} split)")
-#     assert dataset_name in DATASET_REGISTRY, (f"Dataset {dataset_name} not registered. "
-#                                               f"Select a dataset from {DATASET_REGISTRY.keys()} ")
-#     # get dataset fc from registry
-#     dataset_fn = DATASET_REGISTRY[dataset_name]
-#     # load dataset
-#     dataset = dataset_fn(cfg)
-#     return dataset
-
+    return dataset, cfg['preprocess']['max_value']
