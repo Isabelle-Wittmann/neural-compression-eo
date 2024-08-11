@@ -3,7 +3,8 @@ import argparse
 import yaml
 import torch
 from datasets.dataloaders import initialize_dataloaders
-from models.models import *
+from models.compressai_pretrained import *
+from models.compressai_based import *
 from utils import *
 from training.utils import *
 from training.train import *
@@ -13,8 +14,7 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 
 CONFIG = os.path.join(current_dir, 'config.yaml')
 CONFIG_DATA = os.path.join(current_dir, 'datasets', 'config_bigearthnet.yaml') 
-DATA_DIR = '/dccstor/geofm-finetuning/similarity-search/data'
-RESULTS_CSV = os.path.join(current_dir, 'results', 'results_kodak_detailed.csv')
+DATA_DIR = '/dccstor/geofm-finetuning/benediktblumenstiel/similarity-search/data'
 MODEL_DIR = os.path.join(current_dir, 'results', 'models')
 YAML_ARCHIVE = os.path.join(current_dir, 'results', 'configs')
 USED_MODELNAMES = os.path.join(current_dir, 'results', 'modelnames')
@@ -40,7 +40,7 @@ if __name__ == '__main__':
     os.environ['DATA_DIR'] = DATA_DIR
 
     set_all_seeds(cfg['randomseed'])
-    is_bigearth_data = True if cfg['dataset']['name'] == 'BigEarthNet' else False # Indicator variable for whether big earth net data is used
+    is_bigearth_data = cfg['dataset']['name'] == 'BigEarthNet' 
     
     data_loader_train, data_loader_test, max_value = initialize_dataloaders(cfg, CONFIG_DATA)
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -53,7 +53,7 @@ if __name__ == '__main__':
 
 
     try:
-        current_model = globals()[args.model]().to(device)
+        current_model = globals()[args.model](cfg).to(device)
     except KeyError:
         raise ValueError(f"Unknown model: {args.model}")
 
@@ -61,4 +61,4 @@ if __name__ == '__main__':
     train_net(MODEL_DIR, current_model, data_loader_train, data_loader_test, cfg, device, model_name=model_name)
     
     save_model_name(model_name, USED_MODELNAMES)
-    save_config_archive(CONFIG, model_name, YAML_ARCHIVE)
+    save_config_archive(CONFIG,cfg, model_name, YAML_ARCHIVE)

@@ -3,6 +3,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from collections import defaultdict
 import os
+import seaborn as sns
 
 def read_csv_new(filepath):
 
@@ -200,3 +201,55 @@ def evaluate_and_visualize_results(model_names, csv_path, output_dir):
     plot_rate_distortion(names, bpp_dict, psnr_dict,psnr_var_dict, bpp_var_dict,mode='error', path=f'{output_dir}/rate_distortion_error.png')
 
     plot_metrics(names, band_psnr_avg_dict, band_mse_avg_dict, psnr_dict, mse_dict, path=f'{output_dir}/band_metrics')
+
+def plot_correlation_matrix(file_path, path):
+
+    df = pd.read_csv(file_path, index_col=0)
+    
+    df = df.apply(pd.to_numeric, errors='coerce')
+    
+    # mask upper triangle.
+    mask = np.triu(np.ones_like(df, dtype=bool))
+
+    plt.figure(figsize=(8, 6), dpi=300)
+    
+    sns.heatmap(df, mask=mask, annot=True, fmt=".2f", cbar=True, 
+                xticklabels=df.columns, yticklabels=df.index, square=True, 
+                cbar_kws={"shrink": .75}, annot_kws={"fontsize": 8})
+    
+    plt.title('Band Correlation Matrix', fontsize=12, fontweight='bold')
+    plt.xticks(rotation=45, ha='right', fontsize=8)
+    plt.yticks(rotation=0, fontsize=8)
+    plt.savefig(path)
+    plt.close()
+
+def plot_per_image_correlations(file_path, path):
+
+    df = pd.read_csv(file_path)
+    
+    df['Image_Index'] = df['Image_Index'].astype(int)
+    df['Correlation'] = df['Correlation'].astype(float)
+    
+    # extract unique band combinations and sort them.
+    band_combinations = df['Band_Combination'].unique()
+    band_combinations_sorted = sorted(band_combinations, key=lambda x: (int(x.split('-')[0]), int(x.split('-')[1])))
+
+    df['Band_Combination'] = pd.Categorical(df['Band_Combination'], categories=band_combinations_sorted, ordered=True)
+    df = df.sort_values('Band_Combination')
+
+    sns.set_theme(style="whitegrid")
+    
+    plt.figure(figsize=(36, 8), dpi=300)  # increase width for better visibility.
+    sns.boxplot(x='Band_Combination', y='Correlation', data=df, palette='viridis', legend=False)
+
+    positions = [i for i, comb in enumerate(band_combinations_sorted) if int(comb.split('-')[0]) != int(band_combinations_sorted[i-1].split('-')[0])]
+    for pos in positions:
+        plt.axvline(x=pos - 0.5, color='gray', linestyle='--')
+
+    plt.title('Distribution of Per-Image Correlations by Band Combination', fontsize=18, fontweight='bold')
+    plt.xlabel('Band Combination', fontsize=14)
+    plt.ylabel('Correlation', fontsize=14)
+    plt.ylim(-1, 1) 
+    plt.xticks(rotation=45, ha='right')
+    plt.savefig(path)
+    plt.close()

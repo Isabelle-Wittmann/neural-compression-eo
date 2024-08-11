@@ -1,25 +1,32 @@
 dataset:
-  name: Kodak
-  bands: [1, 2, 3]
-  subset_size: 2000
-  subset_size_test: 400
+  name: BigEarthNet 
+  bands: [1,2,3] #[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11] #
+  subset_size: 45000
+  subset_size_test: 500
 
 dataloader:
-  batch_size: 1
-  num_workers: 6
+  batch_size: 32
+  num_workers: 10
   pin_memory: True
   shuffle: False
 
+compressai_model:
+ pretrained: True
+ quality: 8
+ N: 192 
+ M: 320
+ V: 43
+
 training:
-  lmbda: 0.25 #Bit-rate distortion parameter 
-  lr: 0.0005
+  lmbda: 0.05 #Bit-rate distortion parameter 
+  lr: 0.0001
   optim: "Adam"
-  lr_aux: .0005
+  lr_aux: .0001
   optim_aux: "Adam"
-  epochs: 2
+  epochs: 80
   clip_max_norm: 1.0
   
-randomseed: 4321
- #4321
+randomseed: 123
+
   
 

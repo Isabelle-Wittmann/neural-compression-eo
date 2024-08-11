@@ -1,21 +1,12 @@
-import random
-import shutil
-import sys
 import logging
 import torch
 import os
 import torch.optim as optim
 from torch.utils.data import DataLoader
-from torchvision import transforms
-# import tensorflow as tf
-import subprocess
 from tensorboardX import SummaryWriter
-
 from compressai.losses import RateDistortionLoss
-from compressai.zoo import image_models
-
-from .utils import AverageMeter, CustomDataParallel, configure_optimizers
-from torch.profiler import profile, record_function, ProfilerActivity
+from .utils import *
+from utils import *
 
 logging.basicConfig(level=logging.INFO)
 
@@ -29,18 +20,18 @@ def train_one_epoch(
     clip_max_norm: float,
     dataset_name: str,
     writer: SummaryWriter
-):
+) -> None:
     model.train()
     device = next(model.parameters()).device
     loss_ls, mse_loss_ls, bpp_loss_ls, aux_loss_ls = [], [], [], []
     for i, d in enumerate(data_loader_train):
-        d = load_data(d, dataset_name, device)
+        image, label, crs, date, time = load_data(d, dataset_name, device)
 
         optimizer.zero_grad()
         aux_optimizer.zero_grad()
 
-        out_net = model(d)
-        out_criterion = criterion(out_net, d)
+        out_net = model(image, label, crs)
+        out_criterion = criterion(out_net, image)
         out_criterion["loss"].backward()
 
         if clip_max_norm > 0:
@@ -98,10 +89,10 @@ def test_epoch(
 
     with torch.no_grad():
         for d in data_loader_test:
-            d = load_data(d, dataset_name, device)
+            image, label, crs, date, time = load_data(d, dataset_name, device)
 
-            out_net = model(d)
-            out_criterion = criterion(out_net, d)
+            out_net = model(image, label, crs)
+            out_criterion = criterion(out_net, image)
 
             aux_loss.update(model.aux_loss())
             bpp_loss.update(out_criterion["bpp_loss"])
@@ -204,15 +195,6 @@ def train_net(MODEL_DIR,
     if save:
         save_model(MODEL_DIR, net, optimizer, aux_optimizer, lr_scheduler, best_loss, epoch, model_name)
 
-def load_data(d, dataset_name: str, device: torch.device) -> torch.Tensor:
-    if dataset_name in {'ImageNet', 'Kodak'}:
-        return d[0].to(device)
-    elif dataset_name == 'BigEarthNet':
-        return d['image'].to(device)
-    else:
-        logging.error("Unknown dataset")
-        sys.exit(0)
-
 def save_model(MODEL_DIR,
     model: torch.nn.Module,
     optimizer: torch.optim.Optimizer,
@@ -226,7 +208,6 @@ def save_model(MODEL_DIR,
         os.makedirs(MODEL_DIR)
     
     filename = os.path.join(MODEL_DIR, str(name) + '.pth.tar')
-    print(filename)
     
     torch.save(
         {

@@ -1,5 +1,6 @@
 import numpy as np
 import torch 
+import yaml
 from torchvision.datasets import ImageFolder
 from torchvision import transforms
 from torch.utils.data import DataLoader, Subset
@@ -15,6 +16,7 @@ def initialize_dataloaders(cfg, cfg_data):
 
         dataset_train = Subset(dataset,train_set)
         dataset_test = Subset(dataset, test_set)
+
 
     elif cfg['dataset']['name'] == 'ImageNet':
 

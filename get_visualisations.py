@@ -8,9 +8,9 @@ from utils import *
 current_dir = os.path.dirname(os.path.abspath(__file__))
 
 # Define paths relative to the current script directory
-RESULTS_CSV = os.path.join(current_dir, 'results', 'results_kodak_detailed.csv')
-OUTPUT_DIR = os.path.join(current_dir, 'visualisations', 'test')
-MODEL_LIST = ['jpeg', 'jpeg2000']
+RESULTS_CSV = os.path.join(current_dir, 'results', 'results_bigearth_RGB.csv')
+OUTPUT_DIR = os.path.join(current_dir, 'visualisations', 'bigearth_RGB')
+MODEL_LIST = ['jpeg','Bmshj2018_factorized_v_pt', 'Bmshj2018_hyperprior_v_pt', 'FactorizedPrior_v2', 'ScaleHyperprior_v0', 'ScaleHyperprior_meta_v0', 'ScaleHyperprior_meta_v1', 'ScaleHyperprior_crs_only_v0']
 
 if __name__ == '__main__':
 

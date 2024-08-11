@@ -1,4 +1,5 @@
 import os
+import yaml
 from typing import Any, Dict
 import torch
 from torchvision import transforms
@@ -45,12 +46,13 @@ def normalize(sample: Dict[str, Any], maxs: torch.Tensor, mins: torch.Tensor) ->
     sample = torch.clip(sample, min=0.0, max=1.0)
     return sample
 
+    
 def init_bigearthnet(cfg_path, bands):
     """
     Initialize the BigEarthNet dataset with specified configuration.
     """
     # Load configuration
-    print(os.path)
+
     cfg = load_config(cfg_path)
 
     # Get dataset parameters from the configuration
@@ -78,6 +80,7 @@ def init_bigearthnet(cfg_path, bands):
         # Extract max and min values for the specified bands
         maxs = torch.tensor([cfg['preprocess']['maxs'][i] for i in bands]).unsqueeze(1).unsqueeze(1)
         mins = torch.tensor([cfg['preprocess']['mins'][i] for i in bands]).unsqueeze(1).unsqueeze(1)
+        # image_transforms.append(lambda sample: filter_images_by_max_value(sample))
         image_transforms.append(lambda sample: normalize(sample, maxs, mins))
 
 
@@ -93,4 +96,5 @@ def init_bigearthnet(cfg_path, bands):
         transforms=transforms_bigearth,
     )
 
-    return dataset, cfg['preprocess']['max_value']
+    return dataset, cfg['preprocess']['max_val']
+

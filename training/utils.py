@@ -4,11 +4,7 @@ import torch
 import torch.nn as nn
 from compressai.optimizers import net_aux_optimizer
 
-
-def save_config_archive(config_file, model_name, archive_dir):
-    # Read the current YAML configuration file
-    with open(config_file, 'r') as f:
-        cfg = yaml.safe_load(f)
+def save_config_archive(config_file, cfg, model_name, archive_dir):
 
     # Ensure the archive directory exists
     if not os.path.exists(archive_dir):

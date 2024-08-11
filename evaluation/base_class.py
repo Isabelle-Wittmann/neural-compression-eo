@@ -3,6 +3,7 @@ import csv
 import os
 import torch
 import numpy as np
+import pandas as pd
 from statistics import fmean, variance
 
 class Codec_Tester():
@@ -17,6 +18,7 @@ class Codec_Tester():
         self.mse_all = []
         self.bpp_all = []
         self.bpp_est_all = []
+        self.correlation_per_image = []
         self.psnr_per_band_all = {}
         self.mse_per_band_all = {}
 
@@ -65,7 +67,11 @@ class Codec_Tester():
         max_output = y.max().item()
     
         if max(max_input, max_output) > 10 * min(max_input, max_output):
+            
             print("Flag: Max values of inputs and outputs are not within a factor of 10 range.")
+            print(max_input)
+            print(max_output)
+
     
         mse = (x - y).pow(2).mean()
         psnr = 20 * math.log10(self.max_val) - 10 * torch.log10(mse)
@@ -122,7 +128,6 @@ class Codec_Tester():
             ] + [self.psnr_band_avg[i] for i in range(len(self.psnr_band_avg))] + [self.mse_band_avg[i] for i in range(len(self.mse_band_avg))] + [self.psnr_all, self.bpp_all]
             writer.writerow(row)
 
-
     def convert_to_8bit(self, image):
         return np.clip((image / self.max_val) * 255.0, 0, 255).astype(np.uint8)
     
@@ -140,9 +145,77 @@ class Codec_Tester():
         self.mse_all = []
         self.bpp_all = []
         self.bpp_est_all = []
+        self.correlation_per_image = []
         self.psnr_per_band_all = {}
         self.mse_per_band_all = {}
 
         for band_index in range(self.bands):
             self.psnr_per_band_all[band_index] = []
             self.mse_per_band_all[band_index] = []
+
+    def compute_correlation(self):
+        """
+        Compute and save the correlation between the different channels of the images in the dataset.
+        """
+        print("Computing correlation across the dataset...")
+        sum_correlation = None
+        count_images = 0
+        for count, data in enumerate(self.dataloader):
+            input = data['image'] if self.is_bigearth_data else data[0]
+            input = input.to(self.device)
+
+            image_np = input.cpu().numpy()
+            num_channels = image_np.shape[1] 
+
+            for img in image_np:
+
+                correlations = np.corrcoef(img.reshape(num_channels, -1))
+                if np.isnan(correlations).any():
+                    print(f"Warning: NaN values encountered in correlation matrix for image {count}.")
+                    correlations = np.nan_to_num(correlations)  # Replace NaNs with zeros (or other strategies)
+
+                self.correlation_per_image.append(correlations)
+
+                if sum_correlation is None:
+                    sum_correlation = np.zeros_like(correlations)
+            
+                sum_correlation += correlations
+                count_images += 1
+
+        if count % 100 == 0:
+            print(f"Processed {count} batches of images for correlation.")
+        aggregate_correlation = sum_correlation / count_images
+
+        self.correlation_overall = aggregate_correlation
+        print("Finished computing correlations.")
+
+    def save_correlations(self, file_path_agg, file_path_all):
+        """
+        Save the computed correlations for all band combinations to a CSV file.
+        """
+
+
+        with open(file_path_agg, 'w', newline='') as csvfile:
+            writer = csv.writer(csvfile)
+            
+            num_channels = self.correlation_overall.shape[0]
+            writer.writerow(['Band Combination'] + [f'Band_{i}' for i in range(num_channels)])
+            
+            # write aggregate correlation matrix.
+            for i in range(num_channels):
+                writer.writerow([f'Band_{i}'] + self.correlation_overall[i].tolist())
+   
+            
+        with open(file_path_all, 'w', newline='') as csvfile:
+            writer = csv.writer(csvfile)
+
+            writer.writerow(['Image_Index', 'Band_Combination', 'Correlation'])
+            
+            # write per-image correlation matrices.
+            for idx, correlations in enumerate(self.correlation_per_image):
+                num_channels = correlations.shape[0]
+                for i in range(num_channels):
+                    for j in range(i + 1, num_channels):
+                        writer.writerow([idx, f'{i}-{j}', correlations[i, j]])
+
+        
