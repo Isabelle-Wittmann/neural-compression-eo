@@ -1,10 +1,10 @@
 import numpy as np
 import torch 
-import yaml
 from torchvision.datasets import ImageFolder
 from torchvision import transforms
 from torch.utils.data import DataLoader, Subset
 from datasets.bigearthnet_loader import init_bigearthnet
+from .multiearth_loader import *
 
 def initialize_dataloaders(cfg, cfg_data):
     if cfg['dataset']['name'] == 'BigEarthNet':
@@ -17,7 +17,12 @@ def initialize_dataloaders(cfg, cfg_data):
         dataset_train = Subset(dataset,train_set)
         dataset_test = Subset(dataset, test_set)
 
+    elif cfg['dataset']['name'] == 'MultiEarth':
+        
+        data_loader_ts =  get_dataloaders()
 
+        return data_loader_ts, 0, 10000
+    
     elif cfg['dataset']['name'] == 'ImageNet':
 
         transform = transforms.Compose([
@@ -62,6 +67,7 @@ def initialize_dataloaders(cfg, cfg_data):
 
     return data_loader_train, data_loader_test, max_val
     
+
 class TurnTransformKodak(torch.nn.Module):
     def forward(self, img):
         if img.size() == torch.Size([3, 512, 768]):
