@@ -1,6 +1,8 @@
 results/
 visualisations/
 models/reben
+video/
+new_video_stuff.py
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

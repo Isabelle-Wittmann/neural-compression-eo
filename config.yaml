@@ -1,7 +1,7 @@
 dataset:
-  name: BigEarthNet 
-  bands: [1,2,3] #[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11] #
-  subset_size: 45000
+  name: BigEarthNet
+  bands: [0,1,2,3,4,5,6,7,8,9,10,11] #[] #
+  subset_size: 50000 #50000
   subset_size_test: 500
 
 dataloader:
@@ -11,22 +11,22 @@ dataloader:
   shuffle: False
 
 compressai_model:
- pretrained: True
+ pretrained: Trude
  quality: 8
  N: 192 
- M: 320
+ M: 64
  V: 43
 
 training:
-  lmbda: 0.05 #Bit-rate distortion parameter 
-  lr: 0.0001
+  lmbda: 0.5 #Bit-rate distortion parameter 
+  lr: 0.0005
   optim: "Adam"
-  lr_aux: .0001
+  lr_aux: .0005
   optim_aux: "Adam"
-  epochs: 80
+  epochs: 5
   clip_max_norm: 1.0
   
-randomseed: 123
+randomseed: 2345
 
   
 

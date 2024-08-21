@@ -1,29 +1,13 @@
-import os
-import argparse
-import yaml
-import random
-import numpy as np 
-import matplotlib.pyplot as plt
-import csv
-import ast
-
-import torch
 from torchvision import transforms
-from torchvision.datasets import ImageFolder
-from torch.utils.data import DataLoader, Subset
-import torch
-import torch.nn as nn
+
 import torch.nn.functional as F
 from compressai.layers import GDN, MaskedConv2d
 from compressai.entropy_models import EntropyBottleneck, GaussianConditional
 from compressai.layers import GDN
-
-import compressai
-from compressai.zoo import (bmshj2018_factorized, bmshj2018_hyperprior, mbt2018_mean, mbt2018, cheng2020_anchor) 
-
-from datasets.bigearthnet_loader import init_bigearthnet
-# from models.evaluate import forward_pass, test_model, plot_rate_distortion, print_reconstructions, run_impl
-
+from compressai.models.utils import conv, deconv
+import torch
+import torch.nn as nn
+import numpy as np
 
 from compressai.models.base import (
     SCALES_LEVELS,
@@ -32,244 +16,422 @@ from compressai.models.base import (
     CompressionModel,
     get_scale_table,
 )
-from compressai.models.utils import conv, deconv
 
-class FactorizedPrior(CompressionModel):
-        r"""Factorized Prior model from J. Balle, D. Minnen, S. Singh, S.J. Hwang,
-        N. Johnston: `"Variational Image Compression with a Scale Hyperprior"
-        <https://arxiv.org/abs/1802.01436>`_, Int Conf. on Learning Representations
-        (ICLR), 2018.
+from .utils import CoordinatePreprocessor, reshape_to_4d
 
-        .. code-block:: none
-
-                    ┌───┐    y
-                x ──►─┤g_a├──►─┐
-                    └───┘    │
-                            ▼
-                            ┌─┴─┐
-                            │ Q │
-                            └─┬─┘
-                            │
-                        y_hat ▼
-                            │
-                            ·
-                            EB :
-                            ·
-                            │
-                        y_hat ▼
-                            │
-                    ┌───┐    │
-            x_hat ──◄─┤g_s├────┘
-                    └───┘
-
-            EB = Entropy bottleneck
-
-        Args:
-            N (int): Number of channels
-            M (int): Number of channels in the expansion layers (last layer of the
-                encoder and last layer of the hyperprior decoder)
-        """
-
-        def __init__(self, cfg, **kwargs):
-            super().__init__(**kwargs)
-            N = cfg['compressai_model']['N']
-            M = cfg['compressai_model']['M']
-            self.entropy_bottleneck = EntropyBottleneck(M)
-
-            self.g_a = nn.Sequential(
-                conv(3, N),
-                GDN(N),
-                conv(N, N),
-                GDN(N),
-                conv(N, N),
-                GDN(N),
-                conv(N, M),
-            )
-
-            self.g_s = nn.Sequential(
-                deconv(M, N),
-                GDN(N, inverse=True),
-                deconv(N, N),
-                GDN(N, inverse=True),
-                deconv(N, N),
-                GDN(N, inverse=True),
-                deconv(N, 3),
-            )
-
-            self.N = N
-            self.M = M
-
-        @property
-        def downsampling_factor(self) -> int:
-            return 2**4
-
-        def forward(self, x, v, crs):
-            y = self.g_a(x)
-            y_hat, y_likelihoods = self.entropy_bottleneck(y)
-            x_hat = self.g_s(y_hat)
-
-            return {
-                "x_hat": x_hat,
-                "likelihoods": {
-                    "y": y_likelihoods,
-                },
-            }
-
-        @classmethod
-        def from_state_dict(cls, state_dict):
-            """Return a new model instance from `state_dict`."""
-            N = state_dict["g_a.0.weight"].size(0)
-            M = state_dict["g_a.6.weight"].size(0)
-            net = cls(N, M)
-            net.load_state_dict(state_dict)
-            return net
-
-        def compress(self, x, v, crs):
-            y = self.g_a(x)
-            y_strings = self.entropy_bottleneck.compress(y)
-            return {"strings": [y_strings], "shape": y.size()[-2:]}
-
-        def decompress(self, strings, shape):
-            assert isinstance(strings, list) and len(strings) == 1
-            y_hat = self.entropy_bottleneck.decompress(strings[0], shape)
-            x_hat = self.g_s(y_hat).clamp_(0, 1)
-            return {"x_hat": x_hat}
-        
-class FactorizedPrior_12channel(FactorizedPrior):
-
-        def __init__(self, cfg, **kwargs):
-            super().__init__(cfg, **kwargs)
-            N = cfg['compressai_model']['N']
-            M = cfg['compressai_model']['M']
-            self.entropy_bottleneck = EntropyBottleneck(M)
-
-            self.g_a = nn.Sequential(
-                conv(12, N),
-                GDN(N),
-                conv(N, N),
-                GDN(N),
-                conv(N, N),
-                GDN(N),
-                conv(N, M),
-            )
-
-            self.g_s = nn.Sequential(
-                deconv(M, N),
-                GDN(N, inverse=True),
-                deconv(N, N),
-                GDN(N, inverse=True),
-                deconv(N, N),
-                GDN(N, inverse=True),
-                deconv(N, 12),
-            )
-
-            self.N = N
-            self.M = M
-        
-class ScaleHyperprior(CompressionModel):
-    r"""Scale Hyperprior model from J. Balle, D. Minnen, S. Singh, S.J. Hwang,
-    N. Johnston: `"Variational Image Compression with a Scale Hyperprior"
-    <https://arxiv.org/abs/1802.01436>`_ Int. Conf. on Learning Representations
-    (ICLR), 2018.
-
-
-        EB = Entropy bottleneck
-        GC = Gaussian conditional
-
-    Args:
-        N (int): Number of channels
-        M (int): Number of channels in the expansion layers (last layer of the
-            encoder and last layer of the hyperprior decoder)
-    """
-
-    def __init__(self,cfg, **kwargs):
+class CompressionModelBase(CompressionModel):
+    def __init__(self, cfg, input_channels, entropy_channels, **kwargs):
         super().__init__(**kwargs)
-        N = cfg['compressai_model']['N']
-        M = cfg['compressai_model']['M']
+        self.N = cfg['compressai_model']['N']
+        self.M = cfg['compressai_model']['M']
+        self.V = cfg.get('compressai_model', {}).get('V', 128) 
+        self.entropy_bottleneck = EntropyBottleneck(entropy_channels)
+        self.input_channels = input_channels
 
-        self.entropy_bottleneck = EntropyBottleneck(N)
+    def create_g_a(self, layers):
+        return nn.Sequential(*layers)
 
-        self.g_a = nn.Sequential(
-            conv(3, N),
-            GDN(N),
-            conv(N, N),
-            GDN(N),
-            conv(N, N),
-            GDN(N),
-            conv(N, M),
-        )
+    def create_g_s(self, layers):
+        return nn.Sequential(*layers)
 
-        self.g_s = nn.Sequential(
-            deconv(M, N),
-            GDN(N, inverse=True),
-            deconv(N, N),
-            GDN(N, inverse=True),
-            deconv(N, N),
-            GDN(N, inverse=True),
-            deconv(N, 3),
-        )
+    def forward_common(self, x, y_hat, y_likelihoods):
+        x_hat = self.g_s(y_hat)
+        return {"x_hat": x_hat, "likelihoods": {"y": y_likelihoods}}
+
+    def compress_common(self, y):
+        y_strings = self.entropy_bottleneck.compress(y)
+        return {"strings": [y_strings], "shape": y.size()[-2:]}
+
+    def decompress_common(self, strings, shape):
+        y_hat = self.entropy_bottleneck.decompress(strings[0], shape)
+        x_hat = self.g_s(y_hat).clamp_(0, 1)
+        return {"x_hat": x_hat}
+
+
+
+class FactorizedPriorBase(CompressionModelBase):
+    def __init__(self, cfg, input_channels, **kwargs):
+        super().__init__(cfg, input_channels, **kwargs)
+        
+        self.g_a = self.create_g_a([
+            conv(input_channels, self.N),
+            GDN(self.N),
+            conv(self.N, self.N),
+            GDN(self.N),
+            conv(self.N, self.N),
+            GDN(self.N),
+            conv(self.N, self.M),
+        ])
+
+        self.g_s = self.create_g_s([
+            deconv(self.M, self.N),
+            GDN(self.N, inverse=True),
+            deconv(self.N, self.N),
+            GDN(self.N, inverse=True),
+            deconv(self.N, self.N),
+            GDN(self.N, inverse=True),
+            deconv(self.N, input_channels),
+        ])
+
+    @property
+    def downsampling_factor(self) -> int:
+        return 2 ** 4
+
+    def forward(self, x, v=None, crs=None):
+        y = self.g_a(x)
+        y_hat, y_likelihoods = self.entropy_bottleneck(y)
+        return self.forward_common(x, y_hat, y_likelihoods)
+
+    def compress(self, x, v=None, crs=None):
+        y = self.g_a(x)
+        return self.compress_common(y)
+
+    def decompress(self, strings, shape):
+        return self.decompress_common(strings, shape)
+
+
+class FactorizedPrior(FactorizedPriorBase):
+    def __init__(self, cfg, **kwargs):
+        super().__init__(cfg, input_channels=3, entropy_channels=cfg['compressai_model']['M'], **kwargs)
+
+class FactorizedPrior_split(CompressionModel):
+    def __init__(self, cfg, **kwargs):
+        super().__init__(**kwargs)
+        self.model1 = FactorizedPrior(cfg)
+        self.model2 = FactorizedPrior(cfg)
+        self.model3 = FactorizedPrior(cfg)
+        self.model4 = FactorizedPrior(cfg)
+    
+    def forward(self, x, v=None, crs=None):
+        y1 = self.model1.g_a(x[:,0:3,:,:])
+        y_hat1, y_likelihoods1 = self.model1.entropy_bottleneck(y1)
+
+        y2 = self.model2.g_a(x[:,3:6,:,:])
+        y_hat2, y_likelihoods2 = self.model2.entropy_bottleneck(y2)
+
+        y3 = self.model3.g_a(x[:,6:9,:,:])
+        y_hat3, y_likelihoods3 = self.model3.entropy_bottleneck(y3)
+
+        y4 = self.model4.g_a(x[:,9:,:,:])
+        y_hat4, y_likelihoods4 = self.model4.entropy_bottleneck(y4)
+
+        x_hat1 = self.model1.g_s(y_hat1)
+        x_hat2 = self.model2.g_s(y_hat2)
+        x_hat3 = self.model3.g_s(y_hat3)
+        x_hat4 = self.model4.g_s(y_hat4)
+
+        return {"x_hat": torch.cat((x_hat1,x_hat2,x_hat3,x_hat4), dim=1), "likelihoods": {"y":  torch.cat((y_likelihoods1,y_likelihoods2,y_likelihoods3,y_likelihoods4), dim=1)}}
+
+    def compress(self, x, v=None, crs=None):
+        
+        y1 = self.model1.g_a(x[:,0:3,:,:])
+        
+        y_strings1 = self.model1.entropy_bottleneck.compress(y1)
+
+        y2 = self.model2.g_a(x[:,3:6,:,:])
+        y_strings2 = self.model2.entropy_bottleneck.compress(y2)
+
+        y3 = self.model3.g_a(x[:,6:9,:,:])
+        y_strings3 = self.model3.entropy_bottleneck.compress(y3)
+
+        y4 = self.model4.g_a(x[:,9:,:,:])
+        y_strings4 = self.model4.entropy_bottleneck.compress(y4)
+
+        return {"strings": [y_strings1,y_strings2,y_strings3,y_strings4], "shape": y4.size()[-2:]}
+
+    def decompress(self, strings, shape):
+        y_hat1 = self.model1.entropy_bottleneck.decompress(strings[0], shape)
+        y_hat2 = self.model2.entropy_bottleneck.decompress(strings[1], shape)
+        y_hat3 = self.model3.entropy_bottleneck.decompress(strings[2], shape)
+        y_hat4 = self.model4.entropy_bottleneck.decompress(strings[3], shape)
+        x_hat1 = self.model1.g_s(y_hat1).clamp_(0, 1)
+        x_hat2 = self.model2.g_s(y_hat2).clamp_(0, 1)
+        x_hat3 = self.model3.g_s(y_hat3).clamp_(0, 1)
+        x_hat4 = self.model4.g_s(y_hat4).clamp_(0, 1)
+        return {"x_hat": torch.cat((x_hat1,x_hat2,x_hat3,x_hat4), dim=1)}
+
+class FactorizedPrior_split_joint(FactorizedPriorBase):
+    def __init__(self, cfg, **kwargs):
+        super().__init__(cfg, input_channels=3, entropy_channels=cfg['compressai_model']['M']*4, **kwargs)
+
+        self.g_a1 = self.create_g_a([
+            conv(3, self.N),
+            GDN(self.N),
+            conv(self.N, self.N),
+            GDN(self.N),
+            conv(self.N, self.N),
+            GDN(self.N),
+            conv(self.N, self.M),
+        ])
+
+        self.g_s1 = self.create_g_s([
+            deconv(self.M, self.N),
+            GDN(self.N, inverse=True),
+            deconv(self.N, self.N),
+            GDN(self.N, inverse=True),
+            deconv(self.N, self.N),
+            GDN(self.N, inverse=True),
+            deconv(self.N, 3),
+        ])
+
+        self.g_a2 = self.create_g_a([
+            conv(3, self.N),
+            GDN(self.N),
+            conv(self.N, self.N),
+            GDN(self.N),
+            conv(self.N, self.N),
+            GDN(self.N),
+            conv(self.N, self.M),
+        ])
+
+        self.g_s2 = self.create_g_s([
+            deconv(self.M, self.N),
+            GDN(self.N, inverse=True),
+            deconv(self.N, self.N),
+            GDN(self.N, inverse=True),
+            deconv(self.N, self.N),
+            GDN(self.N, inverse=True),
+            deconv(self.N, 3),
+        ])
+
+        self.g_a3 = self.create_g_a([
+            conv(3, self.N),
+            GDN(self.N),
+            conv(self.N, self.N),
+            GDN(self.N),
+            conv(self.N, self.N),
+            GDN(self.N),
+            conv(self.N, self.M),
+        ])
+
+        self.g_s3 = self.create_g_s([
+            deconv(self.M, self.N),
+            GDN(self.N, inverse=True),
+            deconv(self.N, self.N),
+            GDN(self.N, inverse=True),
+            deconv(self.N, self.N),
+            GDN(self.N, inverse=True),
+            deconv(self.N, 3),
+        ])
+
+        self.g_a4 = self.create_g_a([
+            conv(3, self.N),
+            GDN(self.N),
+            conv(self.N, self.N),
+            GDN(self.N),
+            conv(self.N, self.N),
+            GDN(self.N),
+            conv(self.N, self.M),
+        ])
+
+        self.g_s4 = self.create_g_s([
+            deconv(self.M, self.N),
+            GDN(self.N, inverse=True),
+            deconv(self.N, self.N),
+            GDN(self.N, inverse=True),
+            deconv(self.N, self.N),
+            GDN(self.N, inverse=True),
+            deconv(self.N, 3),
+        ])
+    
+    def forward(self, x, v=None, crs=None):
+        y1 = self.g_a1(x[:,0:3,:,:])
+
+        y2 = self.g_a2(x[:,3:6,:,:])
+
+        y3 = self.g_a3(x[:,6:9,:,:])
+
+        y4 = self.g_a4(x[:,9:,:,:])
+
+        y_hat, y_likelihoods = self.entropy_bottleneck(torch.cat((y1,y2,y3,y4), dim=1))
+
+        x_hat1 = self.g_s1(y_hat[:,0:self.M,:,:])
+        x_hat2 = self.g_s2(y_hat[:,self.M:self.M*2,:,:])
+        x_hat3 = self.g_s3(y_hat[:,self.M*2:self.M*3,:,:])
+        x_hat4 = self.g_s4(y_hat[:,self.M*3:,:,:])
+        
+
+        return {"x_hat": torch.cat((x_hat1,x_hat2,x_hat3,x_hat4), dim=1), "likelihoods": {"y":  y_likelihoods}}
+
+    def compress(self, x, v=None, crs=None):
+        
+        y1 = self.g_a1(x[:,0:3,:,:])
+
+        y2 = self.g_a2(x[:,3:6,:,:])
+
+        y3 = self.g_a3(x[:,6:9,:,:])
+
+        y4 = self.g_a4(x[:,9:,:,:])
+        y_strings = self.entropy_bottleneck.compress(torch.cat((y1,y2,y3,y4), dim=1))
+
+        return {"strings": [y_strings], "shape": torch.cat((y1,y2,y3,y4), dim=1).size()[-2:]}
+
+    def decompress(self, strings, shape):
+        y_hat = self.entropy_bottleneck.decompress(strings[0], shape)
+
+        x_hat1 = self.g_s1(y_hat[:,0:self.M,:,:]).clamp_(0, 1)
+        x_hat2 = self.g_s2(y_hat[:,self.M:self.M*2,:,:]).clamp_(0, 1)
+        x_hat3 = self.g_s3(y_hat[:,self.M*2:self.M*3,:,:]).clamp_(0, 1)
+        x_hat4 = self.g_s4(y_hat[:,self.M*3:,:,:]).clamp_(0, 1)
+        return {"x_hat": torch.cat((x_hat1,x_hat2,x_hat3,x_hat4), dim=1)}
+
+class FactorizedPrior_split_jointflex(FactorizedPriorBase):
+    def __init__(self, cfg, **kwargs):
+        super().__init__(cfg, input_channels=3, entropy_channels=cfg['compressai_model']['M'], **kwargs)
+
+        self.g_a1 = self.create_g_a([
+            conv(5, self.N),
+            GDN(self.N),
+            conv(self.N, self.N),
+            GDN(self.N),
+            conv(self.N, self.M),
+        ])
+
+        self.g_s1 = self.create_g_s([
+            deconv(self.M, self.N),
+            GDN(self.N, inverse=True),
+            deconv(self.N, self.N),
+            GDN(self.N, inverse=True),
+            deconv(self.N, 5),
+        ])
+
+        self.g_a2 = self.create_g_a([
+            conv(5, self.N),
+            GDN(self.N),
+            conv(self.N, self.N),
+            GDN(self.N),
+            conv(self.N, self.M),
+        ])
+
+        self.g_s2 = self.create_g_s([
+            deconv(self.M, self.N),
+            GDN(self.N, inverse=True),
+            deconv(self.N, self.N),
+            GDN(self.N, inverse=True),
+            deconv(self.N, 5),
+        ])
+
+        self.g_a3 = self.create_g_a([
+            conv(2, self.N),
+            GDN(self.N),
+            conv(self.N, self.N),
+            GDN(self.N),
+            conv(self.N, self.M),
+        ])
+
+        self.g_s3 = self.create_g_s([
+            deconv(self.M, self.N),
+            GDN(self.N, inverse=True),
+            deconv(self.N, self.N),
+            GDN(self.N, inverse=True),
+            deconv(self.N, 2),
+        ])
+
+        self.g_a = self.create_g_a([
+            conv( self.M*3, self.N),
+            GDN(self.N),
+            conv(self.N, self.M),
+        ])
+
+        self.g_s = self.create_g_s([
+            deconv(self.M, self.N),
+            GDN(self.N, inverse=True),
+            deconv(self.N, self.M*3),
+        ])
+
+        
+    def forward(self, x, v=None, crs=None):
+        y1 = self.g_a1(x[:,0:5,:,:])
+
+        y2 = self.g_a2(x[:,5:10,:,:])
+
+        y3 = self.g_a3(x[:,10:,:,:])
+
+        y = self.g_a(torch.cat((y1,y2,y3), dim=1))
+        print(y.shape)
+
+ 
+        y_hat, y_likelihoods = self.entropy_bottleneck(y)
+        y_hat = self.g_s(y_hat)
+
+        x_hat1 = self.g_s1(y_hat[:,0:self.M,:,:])
+        x_hat2 = self.g_s2(y_hat[:,self.M:self.M*2,:,:])
+        x_hat3 = self.g_s3(y_hat[:,self.M*2:self.M*3,:,:])
+        
+        return {"x_hat": torch.cat((x_hat1,x_hat2,x_hat3), dim=1), "likelihoods": {"y":  y_likelihoods}}
+
+    def compress(self, x, v=None, crs=None):
+        
+        y1 = self.g_a1(x[:,0:5,:,:])
+
+        y2 = self.g_a2(x[:,5:10,:,:])
+
+        y3 = self.g_a3(x[:,10:,:,:])
+
+        y = self.g_a(torch.cat((y1,y2,y3), dim=1))
+        y_strings = self.entropy_bottleneck.compress(y)
+
+        return {"strings": [y_strings], "shape": y.size()[-2:]}
+
+    def decompress(self, strings, shape):
+        y_hat = self.entropy_bottleneck.decompress(strings[0], shape)
+
+        y_hat = self.g_s(y_hat)
+
+        x_hat1 = self.g_s1(y_hat[:,0:self.M,:,:]).clamp_(0, 1)
+        x_hat2 = self.g_s2(y_hat[:,self.M:self.M*2,:,:]).clamp_(0, 1)
+        x_hat3 = self.g_s3(y_hat[:,self.M*2:self.M*3,:,:]).clamp_(0, 1)
+
+        return {"x_hat": torch.cat((x_hat1,x_hat2,x_hat3), dim=1)}
+
+
+class FactorizedPrior12Channel(FactorizedPriorBase):
+    def __init__(self, cfg, **kwargs):
+        super().__init__(cfg, input_channels=12, entropy_channels=cfg['compressai_model']['M'], **kwargs)
+
+
+class ScaleHyperpriorBase(FactorizedPriorBase):
+    def __init__(self, cfg, input_channels, **kwargs):
+        super().__init__(cfg, input_channels, entropy_channels=cfg['compressai_model']['N'], **kwargs)
 
         self.h_a = nn.Sequential(
-            conv(M, N, stride=1, kernel_size=3),
+            conv(self.M, self.N, stride=1, kernel_size=3),
             nn.ReLU(inplace=True),
-            conv(N, N),
+            conv(self.N, self.N),
             nn.ReLU(inplace=True),
-            conv(N, N),
+            conv(self.N, self.N),
         )
 
         self.h_s = nn.Sequential(
-            deconv(N, N),
+            deconv(self.N, self.N),
             nn.ReLU(inplace=True),
-            deconv(N, N),
+            deconv(self.N, self.N),
             nn.ReLU(inplace=True),
-            conv(N, M, stride=1, kernel_size=3),
+            conv(self.N, self.M, stride=1, kernel_size=3),
             nn.ReLU(inplace=True),
         )
 
         self.gaussian_conditional = GaussianConditional(None)
-        self.N = int(N)
-        self.M = int(M)
 
-    @property
-    def downsampling_factor(self) -> int:
-        return 2 ** (4 + 2)
-
-    def forward(self, x, v, crs):
+    def forward(self, x, v=None, crs=None):
         y = self.g_a(x)
         z = self.h_a(torch.abs(y))
         z_hat, z_likelihoods = self.entropy_bottleneck(z)
         scales_hat = self.h_s(z_hat)
         y_hat, y_likelihoods = self.gaussian_conditional(y, scales_hat)
-        x_hat = self.g_s(y_hat)
+        return {"x_hat": self.g_s(y_hat), "likelihoods": {"y": y_likelihoods, "z": z_likelihoods}}
 
-        return {
-            "x_hat": x_hat,
-            "likelihoods": {"y": y_likelihoods, "z": z_likelihoods},
-        }
-
-    @classmethod
-    def from_state_dict(cls, state_dict):
-        """Return a new model instance from `state_dict`."""
-        N = state_dict["g_a.0.weight"].size(0)
-        M = state_dict["g_a.6.weight"].size(0)
-        net = cls(N, M)
-        net.load_state_dict(state_dict)
-        return net
-
-    def compress(self, x, v, crs):
+    def compress(self, x, v=None, crs=None):
         y = self.g_a(x)
         z = self.h_a(torch.abs(y))
-
         z_strings = self.entropy_bottleneck.compress(z)
         z_hat = self.entropy_bottleneck.decompress(z_strings, z.size()[-2:])
-
         scales_hat = self.h_s(z_hat)
         indexes = self.gaussian_conditional.build_indexes(scales_hat)
         y_strings = self.gaussian_conditional.compress(y, indexes)
         return {"strings": [y_strings, z_strings], "shape": z.size()[-2:]}
 
     def decompress(self, strings, shape):
-        assert isinstance(strings, list) and len(strings) == 2
         z_hat = self.entropy_bottleneck.decompress(strings[1], shape)
         scales_hat = self.h_s(z_hat)
         indexes = self.gaussian_conditional.build_indexes(scales_hat)
@@ -278,42 +440,29 @@ class ScaleHyperprior(CompressionModel):
         return {"x_hat": x_hat}
 
 
+class ScaleHyperprior(ScaleHyperpriorBase):
+    def __init__(self, cfg, **kwargs):
+        super().__init__(cfg, input_channels=3, **kwargs)
 
-class MeanScaleHyperprior(ScaleHyperprior):
-    r"""Scale Hyperprior with non zero-mean Gaussian conditionals from D.
-    Minnen, J. Balle, G.D. Toderici: `"Joint Autoregressive and Hierarchical
-    Priors for Learned Image Compression" <https://arxiv.org/abs/1809.02736>`_,
-    Adv. in Neural Information Processing Systems 31 (NeurIPS 2018).
 
-        EB = Entropy bottleneck
-        GC = Gaussian conditional
+class ScaleHyperprior12Channel(ScaleHyperpriorBase):
+    def __init__(self, cfg, **kwargs):
+        super().__init__(cfg, input_channels=12, **kwargs)
 
-    Args:
-        N (int): Number of channels
-        M (int): Number of channels in the expansion layers (last layer of the
-            encoder and last layer of the hyperprior decoder)
-    """
 
-    def __init__(self, N, M, **kwargs):
-        super().__init__(N=N, M=M, **kwargs)
-
-        self.h_a = nn.Sequential(
-            conv(M, N, stride=1, kernel_size=3),
-            nn.LeakyReLU(inplace=True),
-            conv(N, N),
-            nn.LeakyReLU(inplace=True),
-            conv(N, N),
-        )
+class MeanScaleHyperprior(ScaleHyperpriorBase):
+    def __init__(self, cfg, **kwargs):
+        super().__init__(cfg, input_channels=3, **kwargs)
 
         self.h_s = nn.Sequential(
-            deconv(N, M),
+            deconv(self.N, self.M),
             nn.LeakyReLU(inplace=True),
-            deconv(M, M * 3 // 2),
+            deconv(self.M, self.M * 3 // 2),
             nn.LeakyReLU(inplace=True),
-            conv(M * 3 // 2, M * 2, stride=1, kernel_size=3),
+            conv(self.M * 3 // 2, self.M * 2, stride=1, kernel_size=3),
         )
 
-    def forward(self, x, v, crs):
+    def forward(self, x, v=None, crs=None):
         y = self.g_a(x)
         z = self.h_a(y)
         z_hat, z_likelihoods = self.entropy_bottleneck(z)
@@ -327,13 +476,11 @@ class MeanScaleHyperprior(ScaleHyperprior):
             "likelihoods": {"y": y_likelihoods, "z": z_likelihoods},
         }
 
-    def compress(self, x, v, crs):
+    def compress(self, x, v=None, crs=None):
         y = self.g_a(x)
         z = self.h_a(y)
-
         z_strings = self.entropy_bottleneck.compress(z)
         z_hat = self.entropy_bottleneck.decompress(z_strings, z.size()[-2:])
-
         gaussian_params = self.h_s(z_hat)
         scales_hat, means_hat = gaussian_params.chunk(2, 1)
         indexes = self.gaussian_conditional.build_indexes(scales_hat)
@@ -341,108 +488,37 @@ class MeanScaleHyperprior(ScaleHyperprior):
         return {"strings": [y_strings, z_strings], "shape": z.size()[-2:]}
 
     def decompress(self, strings, shape):
-        assert isinstance(strings, list) and len(strings) == 2
         z_hat = self.entropy_bottleneck.decompress(strings[1], shape)
         gaussian_params = self.h_s(z_hat)
         scales_hat, means_hat = gaussian_params.chunk(2, 1)
         indexes = self.gaussian_conditional.build_indexes(scales_hat)
-        y_hat = self.gaussian_conditional.decompress(
-            strings[0], indexes, means=means_hat
-        )
+        y_hat = self.gaussian_conditional.decompress(strings[0], indexes, means=means_hat)
         x_hat = self.g_s(y_hat).clamp_(0, 1)
         return {"x_hat": x_hat}
 
-def reshape_to_4d(input_tensor):
-    # Ensure the input tensor has the expected shape
-    if input_tensor.dim() > 2:
-        print(input_tensor.shape)
-        raise ValueError("Input tensor must have shape (batch, x)")
 
-    output_tensor = input_tensor.view(-1, 192, 1, 1)
-    
-    return output_tensor.repeat(1, 1, 4, 4)
-
-
-class ScaleHyperprior_meta(CompressionModel):
-    r"""Scale Hyperprior model from J. Balle, D. Minnen, S. Singh, S.J. Hwang,
-    N. Johnston: `"Variational Image Compression with a Scale Hyperprior"
-    <https://arxiv.org/abs/1802.01436>`_ Int. Conf. on Learning Representations
-    (ICLR), 2018.
-
-
-        EB = Entropy bottleneck
-        GC = Gaussian conditional
-
-    Args:
-        N (int): Number of channels
-        M (int): Number of channels in the expansion layers (last layer of the
-            encoder and last layer of the hyperprior decoder)
-    """
-
-    def __init__(self,cfg, **kwargs):
-        super().__init__(**kwargs)
-        N = cfg['compressai_model']['N']
-        M = cfg['compressai_model']['M']
-        V = cfg['compressai_model']['V']
-
-        self.entropy_bottleneck = EntropyBottleneck(N)
-
-        self.g_a = nn.Sequential(
-            conv(3, N),
-            GDN(N),
-            conv(N, N),
-            GDN(N),
-            conv(N, N),
-            GDN(N),
-            conv(N, M),
-        )
-
-        self.g_s = nn.Sequential(
-            deconv(M, N),
-            GDN(N, inverse=True),
-            deconv(N, N),
-            GDN(N, inverse=True),
-            deconv(N, N),
-            GDN(N, inverse=True),
-            deconv(N, 3),
-        )
+class ScaleHyperpriorMeta(ScaleHyperpriorBase):
+    def __init__(self, cfg, coordinate_preprocessor, **kwargs):
+        super().__init__(cfg, input_channels=3, **kwargs)
+        self.coordinate_preprocessor = coordinate_preprocessor
 
         self.h_a_img = nn.Sequential(
-            conv(M, N, stride=1, kernel_size=3),
+            conv(self.M, self.N, stride=1, kernel_size=3),
             nn.ReLU(inplace=True),
-            conv(N, N),
+            conv(self.N, self.N),
         )
 
         self.h_a_vec = nn.Sequential(
-            nn.Linear(V, 128),
+            nn.Linear(self.V, 128),
             nn.ReLU(inplace=True),
-            nn.Linear(128, N),
+            nn.Linear(128, self.N),
             nn.ReLU(inplace=True),
         )
-
 
         self.h_a_joint = nn.Sequential(
-
-            conv(N, N),
+            conv(self.N, self.N),
             nn.ReLU(inplace=True),
         )
-
-        self.h_s = nn.Sequential(
-            deconv(N, N),
-            nn.ReLU(inplace=True),
-            deconv(N, N),
-            nn.ReLU(inplace=True),
-            conv(N, M, stride=1, kernel_size=3),
-            nn.ReLU(inplace=True),
-        )
-
-        self.gaussian_conditional = GaussianConditional(None)
-        self.N = int(N)
-        self.M = int(M)
-
-    @property
-    def downsampling_factor(self) -> int:
-        return 2 ** (4 + 2)
 
     def forward(self, x, v, crs):
         y = self.g_a(x)
@@ -451,26 +527,10 @@ class ScaleHyperprior_meta(CompressionModel):
         z_vec = reshape_to_4d(z_vec)
         z_joint = z_img * z_vec
         z = self.h_a_joint(z_joint)
-        # z = self.h_a(torch.abs(y))
         z_hat, z_likelihoods = self.entropy_bottleneck(z)
         scales_hat = self.h_s(z_hat)
         y_hat, y_likelihoods = self.gaussian_conditional(y, scales_hat)
-        x_hat = self.g_s(y_hat)
-
-        return {
-            "x_hat": x_hat,
-            "likelihoods": {"y": y_likelihoods, "z": z_likelihoods},
-        }
-
-
-    @classmethod
-    def from_state_dict(cls, state_dict):
-        """Return a new model instance from `state_dict`."""
-        N = state_dict["g_a.0.weight"].size(0)
-        M = state_dict["g_a.6.weight"].size(0)
-        net = cls(N, M)
-        net.load_state_dict(state_dict)
-        return net
+        return {"x_hat": self.g_s(y_hat), "likelihoods": {"y": y_likelihoods, "z": z_likelihoods}}
 
     def compress(self, x, v, crs):
         y = self.g_a(x)
@@ -482,144 +542,45 @@ class ScaleHyperprior_meta(CompressionModel):
 
         z_strings = self.entropy_bottleneck.compress(z)
         z_hat = self.entropy_bottleneck.decompress(z_strings, z.size()[-2:])
-
         scales_hat = self.h_s(z_hat)
         indexes = self.gaussian_conditional.build_indexes(scales_hat)
         y_strings = self.gaussian_conditional.compress(y, indexes)
         return {"strings": [y_strings, z_strings], "shape": z.size()[-2:]}
 
-    def decompress(self, strings, shape):
-        assert isinstance(strings, list) and len(strings) == 2
-        z_hat = self.entropy_bottleneck.decompress(strings[1], shape)
-        scales_hat = self.h_s(z_hat)
-        indexes = self.gaussian_conditional.build_indexes(scales_hat)
-        y_hat = self.gaussian_conditional.decompress(strings[0], indexes, z_hat.dtype)
-        x_hat = self.g_s(y_hat).clamp_(0, 1)
-        return {"x_hat": x_hat}
 
-class ScaleHyperprior_meta_only(CompressionModel):
-    r"""Scale Hyperprior model from J. Balle, D. Minnen, S. Singh, S.J. Hwang,
-    N. Johnston: `"Variational Image Compression with a Scale Hyperprior"
-    <https://arxiv.org/abs/1802.01436>`_ Int. Conf. on Learning Representations
-    (ICLR), 2018.
-
-
-        EB = Entropy bottleneck
-        GC = Gaussian conditional
-
-    Args:
-        N (int): Number of channels
-        M (int): Number of channels in the expansion layers (last layer of the
-            encoder and last layer of the hyperprior decoder)
-    """
-
-    def __init__(self,cfg, **kwargs):
-        super().__init__(**kwargs)
-        N = cfg['compressai_model']['N']
-        M = cfg['compressai_model']['M']
-        V = cfg['compressai_model']['V']
-
-        self.entropy_bottleneck = EntropyBottleneck(N)
-
-        self.g_a = nn.Sequential(
-            conv(3, N),
-            GDN(N),
-            conv(N, N),
-            GDN(N),
-            conv(N, N),
-            GDN(N),
-            conv(N, M),
-        )
-
-        self.g_s = nn.Sequential(
-            deconv(M, N),
-            GDN(N, inverse=True),
-            deconv(N, N),
-            GDN(N, inverse=True),
-            deconv(N, N),
-            GDN(N, inverse=True),
-            deconv(N, 3),
-        )
-
-        self.h_a_img = nn.Sequential(
-            conv(M, N, stride=1, kernel_size=3),
-            nn.ReLU(inplace=True),
-            conv(N, N),
-        )
-
-        self.h_a_vec = nn.Sequential(
-            nn.Linear(V, 128),
-            nn.ReLU(inplace=True),
-            nn.Linear(128, N),
-            nn.ReLU(inplace=True),
-        )
-
+class ScaleHyperpriorMetaOnly(ScaleHyperpriorBase):
+    def __init__(self, cfg, coordinate_preprocessor, **kwargs):
+        super().__init__(cfg, **kwargs)
+        self.coordinate_preprocessor = coordinate_preprocessor
 
         self.h_a_joint = nn.Sequential(
-
-            conv(N, N),
+            conv(self.N, self.N),
             nn.ReLU(inplace=True),
         )
-
-        self.h_s = nn.Sequential(
-            deconv(N, N),
-            nn.ReLU(inplace=True),
-            deconv(N, N),
-            nn.ReLU(inplace=True),
-            conv(N, M, stride=1, kernel_size=3),
-            nn.ReLU(inplace=True),
-        )
-
-        self.gaussian_conditional = GaussianConditional(None)
-        self.N = int(N)
-        self.M = int(M)
-
-    @property
-    def downsampling_factor(self) -> int:
-        return 2 ** (4 + 2)
 
     def forward(self, x, v, crs):
         y = self.g_a(x)
         z_vec = self.h_a_vec(v)
         z_vec = reshape_to_4d(z_vec)
         z = self.h_a_joint(z_vec)
-        # z = self.h_a(torch.abs(y))
         z_hat, z_likelihoods = self.entropy_bottleneck(z)
         scales_hat = self.h_s(z_hat)
-        y_hat, y_likelihoods = self.gaussian_conditional(y, scales_hat)
-        x_hat = self.g_s(y_hat)
-
-        return {
-            "x_hat": x_hat,
-            "likelihoods": {"y": y_likelihoods, "z": z_likelihoods},
-        }
-
-
-    @classmethod
-    def from_state_dict(cls, state_dict):
-        """Return a new model instance from `state_dict`."""
-        N = state_dict["g_a.0.weight"].size(0)
-        M = state_dict["g_a.6.weight"].size(0)
-        net = cls(N, M)
-        net.load_state_dict(state_dict)
-        return net
+        y_hat, y_likelihoods = self.gaussian_conditional(self.g_a(x), scales_hat)
+        return {"x_hat": self.g_s(y_hat), "likelihoods": {"y": y_likelihoods, "z": z_likelihoods}}
 
     def compress(self, x, v, crs):
         y = self.g_a(x)
         z_vec = self.h_a_vec(v)
         z_vec = reshape_to_4d(z_vec)
         z = self.h_a_joint(z_vec)
-
         z_strings = self.entropy_bottleneck.compress(z)
         z_hat = self.entropy_bottleneck.decompress(z_strings, z.size()[-2:])
-
         scales_hat = self.h_s(z_hat)
         indexes = self.gaussian_conditional.build_indexes(scales_hat)
         y_strings = self.gaussian_conditional.compress(y, indexes)
         return {"strings": [y_strings, z_strings], "shape": z.size()[-2:]}
 
     def decompress(self, strings, shape):
-        assert isinstance(strings, list) and len(strings) == 2
         z_hat = self.entropy_bottleneck.decompress(strings[1], shape)
         scales_hat = self.h_s(z_hat)
         indexes = self.gaussian_conditional.build_indexes(scales_hat)
@@ -627,135 +588,262 @@ class ScaleHyperprior_meta_only(CompressionModel):
         x_hat = self.g_s(y_hat).clamp_(0, 1)
         return {"x_hat": x_hat}
 
-class ScaleHyperprior_crs_only(CompressionModel):
-    r"""Scale Hyperprior model from J. Balle, D. Minnen, S. Singh, S.J. Hwang,
-    N. Johnston: `"Variational Image Compression with a Scale Hyperprior"
-    <https://arxiv.org/abs/1802.01436>`_ Int. Conf. on Learning Representations
-    (ICLR), 2018.
 
-
-        EB = Entropy bottleneck
-        GC = Gaussian conditional
-
-    Args:
-        N (int): Number of channels
-        M (int): Number of channels in the expansion layers (last layer of the
-            encoder and last layer of the hyperprior decoder)
-    """
-
-    def __init__(self,cfg, **kwargs):
-        super().__init__(**kwargs)
-        N = cfg['compressai_model']['N']
-        M = cfg['compressai_model']['M']
-        V = cfg['compressai_model']['V']
-
-        self.entropy_bottleneck = EntropyBottleneck(N)
-
-        self.g_a = nn.Sequential(
-            conv(3, N),
-            GDN(N),
-            conv(N, N),
-            GDN(N),
-            conv(N, N),
-            GDN(N),
-            conv(N, M),
-        )
-
-        self.g_s = nn.Sequential(
-            deconv(M, N),
-            GDN(N, inverse=True),
-            deconv(N, N),
-            GDN(N, inverse=True),
-            deconv(N, N),
-            GDN(N, inverse=True),
-            deconv(N, 3),
-        )
-
-        self.h_a_img = nn.Sequential(
-            conv(M, N, stride=1, kernel_size=3),
-            nn.ReLU(inplace=True),
-            conv(N, N),
-        )
-
+class ScaleHyperpriorCRS(ScaleHyperpriorMeta):
+    def __init__(self, cfg, coordinate_preprocessor, **kwargs):
+        super().__init__(cfg, coordinate_preprocessor, **kwargs)
+        
         self.h_a_vec = nn.Sequential(
-            nn.Linear(2, 32),
+            nn.Linear(3, self.N),
             nn.ReLU(inplace=True),
-            nn.Linear(32, 32),
-            nn.ReLU(inplace=True),
-            nn.Linear(32, N),
-            nn.ReLU(inplace=True),
+            nn.Linear(self.N, self.N * 16)
         )
-
 
         self.h_a_joint = nn.Sequential(
-
-            conv(N, N),
+            conv(self.N * 2, self.N, stride=1, kernel_size=3),
             nn.ReLU(inplace=True),
+            conv(self.N, self.N),
         )
-
-        self.h_s = nn.Sequential(
-            deconv(N, N),
-            nn.ReLU(inplace=True),
-            deconv(N, N),
-            nn.ReLU(inplace=True),
-            conv(N, M, stride=1, kernel_size=3),
-            nn.ReLU(inplace=True),
-        )
-
-        self.gaussian_conditional = GaussianConditional(None)
-        self.N = int(N)
-        self.M = int(M)
-
-    @property
-    def downsampling_factor(self) -> int:
-        return 2 ** (4 + 2)
 
     def forward(self, x, v, crs):
-       
+        batch_size = x.size(0)
         y = self.g_a(x)
-        z_vec = self.h_a_vec(crs)
-        z_vec = reshape_to_4d(z_vec)
-        z = self.h_a_joint(z_vec)
-        # z = self.h_a(torch.abs(y))
+        z_img = self.h_a_img(y)
+        processed_coords = self.coordinate_preprocessor(crs)
+        z_vec = self.h_a_vec(processed_coords)
+        embedding_2d = z_vec.view(batch_size, 192, 4, 4)
+        combined_features = torch.cat((z_img, embedding_2d), dim=1)
+        z = self.h_a_joint(combined_features)
+
         z_hat, z_likelihoods = self.entropy_bottleneck(z)
         scales_hat = self.h_s(z_hat)
         y_hat, y_likelihoods = self.gaussian_conditional(y, scales_hat)
-        x_hat = self.g_s(y_hat)
-
-        return {
-            "x_hat": x_hat,
-            "likelihoods": {"y": y_likelihoods, "z": z_likelihoods},
-        }
-
-
-    @classmethod
-    def from_state_dict(cls, state_dict):
-        """Return a new model instance from `state_dict`."""
-        N = state_dict["g_a.0.weight"].size(0)
-        M = state_dict["g_a.6.weight"].size(0)
-        net = cls(N, M)
-        net.load_state_dict(state_dict)
-        return net
+        return {"x_hat": self.g_s(y_hat), "likelihoods": {"y": y_likelihoods, "z": z_likelihoods}}
 
     def compress(self, x, v, crs):
+        batch_size = x.size(0)
         y = self.g_a(x)
-        z_vec = self.h_a_vec(crs)
-        z_vec = reshape_to_4d(z_vec)
-        z = self.h_a_joint(z_vec)
-
+        z_img = self.h_a_img(y)
+        processed_coords = self.coordinate_preprocessor(crs)
+        z_vec = self.h_a_vec(processed_coords)
+        embedding_2d = z_vec.view(batch_size, 192, 4, 4)
+        combined_features = torch.cat((z_img, embedding_2d), dim=1)
+        z = self.h_a_joint(combined_features)
         z_strings = self.entropy_bottleneck.compress(z)
         z_hat = self.entropy_bottleneck.decompress(z_strings, z.size()[-2:])
-
         scales_hat = self.h_s(z_hat)
         indexes = self.gaussian_conditional.build_indexes(scales_hat)
         y_strings = self.gaussian_conditional.compress(y, indexes)
         return {"strings": [y_strings, z_strings], "shape": z.size()[-2:]}
 
+
+class ScaleHyperpriorCRSOnly(ScaleHyperpriorBase):
+    def __init__(self, cfg, coordinate_preprocessor, **kwargs):
+        super().__init__(cfg, input_channels=3, **kwargs)
+        self.coordinate_preprocessor = coordinate_preprocessor
+
+        self.h_a_vec = nn.Sequential(
+            nn.Linear(3, 64),
+            nn.ReLU(inplace=True),
+            nn.Linear(64, self.N * 16)
+        )
+
+        self.h_a_joint = nn.Sequential(
+            conv(self.N, self.N, stride=1, kernel_size=3),
+            nn.ReLU(inplace=True),
+            conv(self.N, self.N),
+        )
+
+    def forward(self, x, v, crs):
+        batch_size = x.size(0)
+        processed_coords = self.coordinate_preprocessor(crs)
+        z_vec = self.h_a_vec(processed_coords)
+        embedding_2d = z_vec.view(batch_size, 192, 4, 4)
+        z = self.h_a_joint(embedding_2d)
+        z_hat, z_likelihoods = self.entropy_bottleneck(z)
+        scales_hat = self.h_s(z_hat)
+        y_hat, y_likelihoods = self.gaussian_conditional(self.g_a(x), scales_hat)
+        return {"x_hat": self.g_s(y_hat), "likelihoods": {"y": y_likelihoods, "z": z_likelihoods}}
+
+    def compress(self, x, v, crs):
+        batch_size = x.size(0)
+        processed_coords = self.coordinate_preprocessor(crs)
+        z_vec = self.h_a_vec(processed_coords)
+        embedding_2d = z_vec.view(batch_size, 192, 4, 4)
+        z = self.h_a_joint(embedding_2d)
+        z_strings = self.entropy_bottleneck.compress(z)
+        z_hat = self.entropy_bottleneck.decompress(z_strings, z.size()[-2:])
+        scales_hat = self.h_s(z_hat)
+        indexes = self.gaussian_conditional.build_indexes(scales_hat)
+        y_strings = self.gaussian_conditional.compress(self.g_a(x), indexes)
+        return {"strings": [y_strings, z_strings], "shape": z.size()[-2:]}
+
     def decompress(self, strings, shape):
-        assert isinstance(strings, list) and len(strings) == 2
         z_hat = self.entropy_bottleneck.decompress(strings[1], shape)
         scales_hat = self.h_s(z_hat)
         indexes = self.gaussian_conditional.build_indexes(scales_hat)
         y_hat = self.gaussian_conditional.decompress(strings[0], indexes, z_hat.dtype)
         x_hat = self.g_s(y_hat).clamp_(0, 1)
         return {"x_hat": x_hat}
+
+
+class Conv3d(CompressionModelBase):
+    def __init__(self, cfg, **kwargs):
+        super().__init__(cfg, 3, entropy_channels=cfg['compressai_model']['M'], **kwargs)
+        
+        self.g_a = self.create_g_a([
+            conv(16, self.N),
+            GDN(self.N),
+            conv(self.N, self.N),
+            GDN(self.N),
+            conv(self.N, self.N),
+            GDN(self.N),
+            conv(self.N, self.M),
+        ])
+
+        self.g_s = self.create_g_s([
+            deconv(self.M, self.N),
+            GDN(self.N, inverse=True),
+            deconv(self.N, self.N),
+            GDN(self.N, inverse=True),
+            deconv(self.N, self.N),
+            GDN(self.N, inverse=True),
+            deconv(self.N, 16),
+        ])
+        self.hp_a = self.create_g_a([nn.Conv3d(
+                in_channels=1,
+                out_channels=16,
+                kernel_size=(2, 5, 5),
+                stride=(2, 2, 2),
+                padding=(0, 2, 2),
+            ),
+        
+            # # nn.BatchNorm3d(16),
+            # nn.LeakyReLU(),
+            # nn.Conv3d(
+            #     in_channels=16,
+            #     out_channels=32,
+            #     kernel_size=(5, 5, 5),
+            #     stride=(2, 2, 2),
+            #     padding=(2, 2, 2),
+            # ),
+            # # nn.BatchNorm3d(32),
+            # nn.LeakyReLU(),
+            # _ResBlock(32),
+            # _ResBlock(32),
+            # _ResBlock(32),
+            # nn.Conv3d(
+            #     in_channels=32,
+            #     out_channels=64,
+            #     kernel_size=(5, 5, 5),
+            #     stride=(2, 2, 2),
+            #     padding=(2, 2, 2),
+            # ),
+            # # nn.BatchNorm3d(64),
+            # nn.LeakyReLU(),
+        ])
+
+        self.hp_s = self.create_g_s([nn.Upsample(scale_factor=(2, 4, 4)),
+            # nn.Conv3d(
+            #     in_channels=64,
+            #     out_channels=32,
+            #     kernel_size=(5, 5, 5),
+            #     stride=(2, 2, 2),
+            #     padding=(2, 2, 2),
+            # ),
+            # # nn.BatchNorm3d(32),
+            # nn.LeakyReLU(),
+            # _ResBlock(32),
+            # _ResBlock(32),
+            # _ResBlock(32),
+            # nn.Upsample(scale_factor=(3, 2, 2)),
+            # nn.Conv3d(
+            #     in_channels=32,
+            #     out_channels=16,
+            #     kernel_size=(5, 3, 3),
+            #     stride=(2, 1, 1),
+            #     padding=(2, 1, 1),
+            # ),
+            # # nn.BatchNorm3d(16),
+            # nn.LeakyReLU(),
+            # nn.Upsample(scale_factor=(3, 2, 2)),
+
+            nn.Conv3d(
+                in_channels=16,
+                out_channels=3,
+                kernel_size=(2, 3, 3),
+                stride=(2, 2, 2),
+                padding=(0, 1, 1),  # (2, 1, 1)
+            ),
+            # nn.BatchNorm3d(1),
+            nn.LeakyReLU(),
+        ])
+
+    @property
+    def downsampling_factor(self) -> int:
+        return 2 ** 4
+
+    def forward(self, x, v=None, crs=None):
+        # print(x.shape)
+        x = x.unsqueeze(1)
+        x = self.hp_a(x)
+        x = x.squeeze(2)
+        y = self.g_a(x)
+        
+        y_hat, y_likelihoods = self.entropy_bottleneck(y)
+        
+        x_hat = self.g_s(y_hat)
+        x_hat = x_hat.unsqueeze(2)
+        x_hat = self.hp_s(x_hat)
+        
+        x_hat = x_hat.squeeze(2)
+        # print(x_hat.shape)
+        
+        return {"x_hat": x_hat, "likelihoods": {"y": y_likelihoods}}
+
+    def compress(self, x, v=None, crs=None):
+        x = x.unsqueeze(1)
+        y = self.g_a(x)
+
+        y_strings = self.entropy_bottleneck.compress(y)
+        return {"strings": [y_strings], "shape": y.size()[-3:]}
+
+    def decompress(self, strings, shape):
+        y_hat = self.entropy_bottleneck.decompress(strings[0], shape)
+
+        x_hat = self.g_s(y_hat).clamp_(0, 1)
+        x_hat = x_hat.squeeze(1)
+        return {"x_hat": x_hat}
+
+class _ResBlock(nn.Module):
+    def __init__(self, channels):
+        super(_ResBlock, self).__init__()
+
+        self.act = nn.LeakyReLU()
+
+        self.block = nn.Sequential(*[
+            nn.Conv3d(
+                in_channels=channels,
+                out_channels=channels,
+                kernel_size=(3, 3, 3),
+                stride=(1, 1, 1),
+                padding=(1, 1, 1),
+            ),
+            # nn.BatchNorm3d(channels),
+            self.act,
+            nn.Conv3d(
+                in_channels=channels,
+                out_channels=channels,
+                kernel_size=(3, 3, 3),
+                stride=(1, 1, 1),
+                padding=(1, 1, 1),
+            ),
+            # nn.BatchNorm3d(channels),
+        ])
+
+    def forward(self, x):
+        residual = x
+        out = self.block(x)
+        out += residual
+        out = self.act(out)
+        return out

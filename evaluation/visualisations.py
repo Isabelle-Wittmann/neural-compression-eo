@@ -33,9 +33,9 @@ def flatten(values):
         else:
             yield item
 
-def plot_rate_distortion(names, bpp, psnr, psnr_variance, bpp_variance, path, mode, fig_size=(18, 12)):
+def plot_rate_distortion(names, bpp, psnr, psnr_variance, bpp_variance, path, mode, fig_size=(14, 10)):
 
-    plt.figure(dpi=300)
+    plt.figure(dpi=600)
 
     fig, axes = plt.subplots(1, 1, figsize=fig_size)
 
@@ -43,7 +43,7 @@ def plot_rate_distortion(names, bpp, psnr, psnr_variance, bpp_variance, path, mo
     all_bpp_values = [float(value) for value in flatten(bpp.values())]
     all_psnr_values = [float(value) for value in flatten(psnr.values())]
     
-    xlim = (min(all_bpp_values) * 0.95, max(all_bpp_values) * 1.05)
+    xlim = (min(all_bpp_values) * 0.85, max(all_bpp_values) * 1.25)
     ylim = (min(all_psnr_values) * 0.95, max(all_psnr_values) * 1.05)
 
     # Rate-Distortion Plot
@@ -213,7 +213,7 @@ def plot_correlation_matrix(file_path, path):
 
     plt.figure(figsize=(8, 6), dpi=300)
     
-    sns.heatmap(df, mask=mask, annot=True, fmt=".2f", cbar=True, 
+    sns.heatmap(df,vmin=0,vmax=1, mask=mask, annot=True, fmt=".2f", cbar=True, 
                 xticklabels=df.columns, yticklabels=df.index, square=True, 
                 cbar_kws={"shrink": .75}, annot_kws={"fontsize": 8})
     
@@ -239,7 +239,7 @@ def plot_per_image_correlations(file_path, path):
 
     sns.set_theme(style="whitegrid")
     
-    plt.figure(figsize=(36, 8), dpi=300)  # increase width for better visibility.
+    plt.figure(figsize=(24, 8), dpi=300)  # increase width for better visibility.
     sns.boxplot(x='Band_Combination', y='Correlation', data=df, palette='viridis', legend=False)
 
     positions = [i for i, comb in enumerate(band_combinations_sorted) if int(comb.split('-')[0]) != int(band_combinations_sorted[i-1].split('-')[0])]

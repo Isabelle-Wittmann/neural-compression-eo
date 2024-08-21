@@ -5,11 +5,12 @@ import torch
 from datasets.dataloaders import initialize_dataloaders
 from models.compressai_pretrained import *
 from models.compressai_based import *
+from models.multispectral import *
 from utils import *
 from training.utils import *
 from training.train import *
+from training.train_multispectral import *
 
-# Get the directory of the current script
 current_dir = os.path.dirname(os.path.abspath(__file__))
 
 CONFIG = os.path.join(current_dir, 'config.yaml')
@@ -51,9 +52,10 @@ if __name__ == '__main__':
         print('__CUDA Device Name:',torch.cuda.get_device_name(0))
         print('__CUDA Device Total Memory [GB]:',torch.cuda.get_device_properties(0).total_memory/1e9)
 
-
+    coordinate_preprocessor = CoordinatePreprocessor(method='sincos', num_bins=100, embedding_dim=64)
+    
     try:
-        current_model = globals()[args.model](cfg).to(device)
+        current_model = globals()[args.model](cfg).to(device) #
     except KeyError:
         raise ValueError(f"Unknown model: {args.model}")
 

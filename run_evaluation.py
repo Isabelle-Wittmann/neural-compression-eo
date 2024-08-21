@@ -8,11 +8,11 @@ from evaluation.neural import *
 from models.compressai_pretrained import *
 from models.compressai_based import *
 from utils import *
+from models.multispectral import *
 
-# Get the directory of the current script
 current_dir = os.path.dirname(os.path.abspath(__file__))
 
-RESULTS_CSV = os.path.join(current_dir, 'results', 'results_bigearth_RGB.csv')
+RESULTS_CSV = os.path.join(current_dir, 'results', 'results_bigearth_12.csv')
 
 CONFIG = os.path.join(current_dir, 'config.yaml')
 CONFIG_DATA = os.path.join(current_dir, 'datasets', 'config_bigearthnet.yaml') 
@@ -41,22 +41,73 @@ if __name__ == '__main__':
     data_loader_train, data_loader_test, max_value = initialize_dataloaders(cfg, CONFIG_DATA)
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
+    # try:
+    #     current_model1 = globals()[args.model](cfg).to(device)
+    #     current_model2 = globals()[args.model](cfg).to(device)
+    #     current_model3 = globals()[args.model](cfg).to(device)
+    #     current_model4 = globals()[args.model](cfg).to(device)
+    # except KeyError:
+    #     raise ValueError(f"Unknown model: {args.model}")
+    
+    
+    # model_name1 = args.model + '_v' + '2'
+    # model_name2 = args.model + '_v' + '3'
+    # model_name3 = args.model + '_v' + '4'
+    # model_name4 = args.model + '_v' + '5'
+    
+    # filename1 = os.path.join(MODEL_DIR, str(model_name1) +'.pth.tar')
+    # filename2 = os.path.join(MODEL_DIR, str(model_name2) +'.pth.tar')
+    # filename3 = os.path.join(MODEL_DIR, str(model_name3) +'.pth.tar')
+    # filename4 = os.path.join(MODEL_DIR, str(model_name4) +'.pth.tar')
+
+    # if os.path.isfile(filename1):
+        
+    #     checkpoint = torch.load(filename1, map_location=device)
+    #     current_model1.load_state_dict(checkpoint["state_dict"], strict=False)
+    #     # current_model.update(force=True)
+    # if os.path.isfile(filename2):
+        
+    #     checkpoint = torch.load(filename2, map_location=device)
+    #     current_model2.load_state_dict(checkpoint["state_dict"], strict=False)
+    # if os.path.isfile(filename3):
+        
+    #     checkpoint = torch.load(filename3, map_location=device)
+    #     current_model3.load_state_dict(checkpoint["state_dict"], strict=False)
+    # if os.path.isfile(filename4):
+        
+    #     checkpoint = torch.load(filename4, map_location=device)
+    #     current_model4.load_state_dict(checkpoint["state_dict"], strict=False)
+    
+
+    # tester = Neural_Codec_Tester_split(data_loader = data_loader_test, 
+    #                             device = device, 
+    #                             max_val = 1,
+    #                             is_bigearth_data = is_bigearth_data,
+    #                             bpp_per_channel = BPP_PER_CHANNEL)
+
+    # tester.get_metrics(current_model1,current_model2,current_model3,current_model4)
+    # tester.set_name(model_name1)
+    # tester.compute_metric_averages()
+    # tester.write_results_to_csv(RESULTS_CSV)
+    # tester.save_sample_reconstruction(data_loader_test.dataset[145], current_model1, os.path.join(current_dir, 'visualisations/reconstructions', model_name))
+    # tester.flush()
+
     try:
-        current_model = globals()[args.model](cfg).to(device)
+        current_model1 = globals()[args.model](cfg).to(device)
     except KeyError:
         raise ValueError(f"Unknown model: {args.model}")
     
     
-    model_name = args.model + '_v' + args.version
-    
-    filename = os.path.join(MODEL_DIR, str(model_name) +'.pth.tar')
+    model_name1 = args.model + '_v' + args.version
 
-    if os.path.isfile(filename):
+    filename1 = os.path.join(MODEL_DIR, str(model_name1) +'.pth.tar')
+
+    if os.path.isfile(filename1):
         
-        checkpoint = torch.load(filename, map_location=device)
-        current_model.load_state_dict(checkpoint["state_dict"], strict=False)
+        checkpoint = torch.load(filename1, map_location=device)
+        current_model1.load_state_dict(checkpoint["state_dict"], strict=False)
         # current_model.update(force=True)
-    
+
 
     tester = Neural_Codec_Tester(data_loader = data_loader_test, 
                                 device = device, 
@@ -64,12 +115,13 @@ if __name__ == '__main__':
                                 is_bigearth_data = is_bigearth_data,
                                 bpp_per_channel = BPP_PER_CHANNEL)
 
-    tester.get_metrics(current_model)
-    tester.set_name(model_name)
+    tester.get_metrics(current_model1)
+    tester.set_name(model_name1)
     tester.compute_metric_averages()
     tester.write_results_to_csv(RESULTS_CSV)
-    tester.save_sample_reconstruction(data_loader_test.dataset[145], current_model, os.path.join(current_dir, 'visualisations', model_name))
+    tester.save_sample_reconstruction(data_loader_test.dataset[145], current_model1, os.path.join(current_dir, 'visualisations/reconstructions', model_name))
     tester.flush()
+
 
     # tester = Pillow_Codec_Tester(data_loader = data_loader_test, 
     #                         device = device, 

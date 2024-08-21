@@ -5,6 +5,9 @@ import torch
 import numpy as np
 import pandas as pd
 from statistics import fmean, variance
+from utils import *
+import matplotlib.pyplot as plt
+from torchvision import transforms
 
 class Codec_Tester():
     def __init__(self, data_loader, device, max_val, is_bigearth_data, bpp_per_channel):
@@ -46,7 +49,7 @@ class Codec_Tester():
         
         # Determine which dimension is which
         for i, dim in enumerate(dims):
-            if 1 <= dim <= 20:
+            if 1 <= dim <= 14:
                 self.bands = dim
                 self.bands_dim = i
             elif  self.height is None or dim > self.height:
@@ -105,9 +108,9 @@ class Codec_Tester():
         self.name = name
     
     def write_results_to_csv(self, csv_dir):
-        # Check if the file exists
+
         file_exists = os.path.isfile(csv_dir)
-        # Open the file in append mode, create if not exists
+
         with open(csv_dir, 'a+', newline='') as csvfile:
             csvfile.seek(0)  # Move to the start of the file
             first_char = csvfile.read(1)  # Read the first character
@@ -130,8 +133,24 @@ class Codec_Tester():
 
     def convert_to_8bit(self, image):
         return np.clip((image / self.max_val) * 255.0, 0, 255).astype(np.uint8)
-    
+
+
     def img_stats(self, image):
+
+        image = image.cpu().numpy() if torch.is_tensor(image) else image
+        
+
+        num_bands = image.shape[0]  # Assuming shape is (bands, height, width)
+        
+        for i in range(num_bands):
+            band = image[i, :, :]
+            print(f"Statistics for Band {i+1}:")
+            print(f"  Mean: {band.mean():.4f}")
+            print(f"  Std Dev: {band.std():.4f}")
+            print(f"  Min: {band.min():.4f}")
+            print(f"  Max: {band.max():.4f}")
+            print("-" * 30)
+        
         print(f"  Mean: {image.mean()}")
         print(f"  Std Dev: {image.std()}")
         print(f"  Min: {image.min()}")
@@ -161,6 +180,7 @@ class Codec_Tester():
         sum_correlation = None
         count_images = 0
         for count, data in enumerate(self.dataloader):
+            print(count)
             input = data['image'] if self.is_bigearth_data else data[0]
             input = input.to(self.device)
 
@@ -218,4 +238,119 @@ class Codec_Tester():
                     for j in range(i + 1, num_channels):
                         writer.writerow([idx, f'{i}-{j}', correlations[i, j]])
 
+
+    def get_summarising_stats(self):
+        """
+        Compute and print dataset-wide statistics: mean, std dev, min, and max.
+        """
+        print("Computing dataset-wide statistics...")
+
+        sum_mean = 0
+        sum_std = 0
+        global_min = float('inf')
+        global_max = float('-inf')
+        count_batch = 0
+
+        for count, data in enumerate(self.dataloader):
+            count_batch += 1
+            input = data['image'] if self.is_bigearth_data else data[0]
+            input = input.to(self.device)
+
+            batch_mean = input.mean()  # mean per channel
+            batch_std = input.std()    # std dev per channel
+            batch_min = input.min()
+            batch_max = input.max()
+
+            sum_mean += batch_mean 
+            sum_std += batch_std 
+
+            global_min = min(global_min, batch_min.item())
+            global_max = max(global_max, batch_max.item())
+
+            if count % 1000 == 0:
+                print(f"Processed {count} batches for summarizing stats.")
+
+        dataset_mean = sum_mean / count_batch
+        dataset_std = sum_std / count_batch
+
+        print(f"  Dataset-wide Mean: {dataset_mean}")
+        print(f"  Dataset-wide Std Dev: {dataset_std}")
+        print(f"  Dataset-wide Min: {global_min}")
+        print(f"  Dataset-wide Max: {global_max}")
+        print("Finished computing dataset-wide statistics.")
+
+            
+    def print_image(self, image, path, n):
+
+        image, label, crs, date, time = load_data(image, self.is_bigearth_data, self.device)
         
+        fig, axes = plt.subplots(1, 1, figsize=(8, 8))
+        
+        if (image.max() > 0.4) or (image.max() < 0.2):
+            print("Flag: Range of pixel values might not be suitable for visualising, Max is: " + str(image.max()))
+        
+        if self.bands > 3:
+            image=image.squeeze()[1:3]
+        else:
+            image=image.squeeze()
+
+        img = transforms.ToPILImage()(np.clip(image.cpu()/ 0.2, 0, 1))
+        axes.imshow(img)
+
+        plt.savefig(path + '/sample_image_' + str(n) + '.png')
+        plt.close()
+
+    def print_image_bands_individual(self, image, path, n):
+
+        image, label, crs, date, time = load_data(image, self.is_bigearth_data, self.device)
+        
+
+        image = image.cpu().numpy() if torch.is_tensor(image) else image
+        num_bands = image.shape[0]  # Assuming shape is (bands, height, width)
+        
+        # Create a figure with subplots for each band
+        fig, axes = plt.subplots(2, int(num_bands/2), figsize=(26, 8)) 
+
+        # Flatten axes for easier indexing
+        axes = axes.flatten()
+        
+        for i in range(num_bands):
+            band = image[i, :, :]
+            
+            # Flag if pixel values are outside expected range
+            if (band.max() > 0.4) or (band.max() < 0.2):
+                print(f"Flag: Range of pixel values for band {i+1} might not be suitable for visualizing, Max is: {band.max()}")
+            
+            # Clip and normalize the band for better visualization
+
+            if i in [5,6,7,8,9,10]:
+               band_img = np.clip(band / 0.8, 0, 1) 
+            else:
+                band_img = np.clip(band / 0.2, 0, 1)
+            
+            # Convert to PIL image for consistency with original code
+            img = transforms.ToPILImage()(band_img)
+            
+            # Plot the image
+            axes[i].imshow(img, cmap='gray')  # Using grayscale since these are single-band images
+            axes[i].set_title(f'Band {i}')
+            axes[i].axis('off')
+        
+        # Save the figure with all bands displayed
+        plt.tight_layout()
+        plt.savefig(f"{path}/multispectral_bands_" + str(n) + '.png')
+        plt.close()
+
+    def compute_image_correlation(self, image):
+
+        image_np = image.unsqueeze(0).numpy()
+        
+        num_channels = image_np.shape[1] 
+
+        for img in image_np:
+
+            correlations = np.corrcoef(img.reshape(num_channels, -1))
+            if np.isnan(correlations).any():
+                print(f"Warning: NaN values encountered in correlation matrix")
+                correlations = np.nan_to_num(correlations) 
+            self.correlation_overall = correlations

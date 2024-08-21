@@ -25,6 +25,7 @@ def train_one_epoch(
     device = next(model.parameters()).device
     loss_ls, mse_loss_ls, bpp_loss_ls, aux_loss_ls = [], [], [], []
     for i, d in enumerate(data_loader_train):
+
         image, label, crs, date, time = load_data(d, dataset_name, device)
 
         optimizer.zero_grad()
@@ -32,6 +33,7 @@ def train_one_epoch(
 
         out_net = model(image, label, crs)
         out_criterion = criterion(out_net, image)
+        
         out_criterion["loss"].backward()
 
         if clip_max_norm > 0:
@@ -45,7 +47,7 @@ def train_one_epoch(
 
         if i % 10 == 0:
             logging.info(
-                f"Train epoch {epoch}: [{i * len(d)}/{len(data_loader_train.dataset)} "
+                f"Train epoch {epoch}: [{i * len(image)}/{len(data_loader_train.dataset)} "
                 f"({100. * i / len(data_loader_train):.0f}%)] "
                 f'Loss: {out_criterion["loss"].item():.3f} | '
                 f'MSE loss: {out_criterion["mse_loss"].item():.3f} | '
@@ -58,15 +60,21 @@ def train_one_epoch(
         bpp_loss_ls += [out_criterion["bpp_loss"].item()]
         aux_loss_ls += [aux_loss.item()]
 
+        # Log losses per iteration instead of per epoch
+        writer.add_scalar('Loss/train', out_criterion["loss"].item(), epoch * len(data_loader_train) + i)
+        writer.add_scalar('MSE_Loss/train', out_criterion["mse_loss"].item(), epoch * len(data_loader_train) + i)
+        writer.add_scalar('Bpp_Loss/train', out_criterion["bpp_loss"].item(), epoch * len(data_loader_train) + i)
+        writer.add_scalar('Aux_Loss/train', aux_loss.item(), epoch * len(data_loader_train) + i)
+
     avg_loss = sum(loss_ls) / len(loss_ls) if loss_ls else 0
     avg_mse_loss = sum(mse_loss_ls) / len(mse_loss_ls) if mse_loss_ls else 0
     avg_bpp_loss = sum(bpp_loss_ls) / len(bpp_loss_ls) if bpp_loss_ls else 0
     avg_aux_loss = sum(aux_loss_ls) / len(aux_loss_ls) if aux_loss_ls else 0
 
-    writer.add_scalar('Loss/train', avg_loss, epoch)
-    writer.add_scalar('MSE_Loss/train', avg_mse_loss, epoch)
-    writer.add_scalar('Bpp_Loss/train', avg_bpp_loss, epoch)
-    writer.add_scalar('Aux_Loss/train', avg_aux_loss, epoch)
+    writer.add_scalar('Loss/train_per_epoch', avg_loss, epoch)
+    writer.add_scalar('MSE_Loss/train_per_epoch', avg_mse_loss, epoch)
+    writer.add_scalar('Bpp_Loss/train_per_epoch', avg_bpp_loss, epoch)
+    writer.add_scalar('Aux_Loss/train_per_epoch', avg_aux_loss, epoch)
     writer.add_scalar('Learning_Rate', optimizer.param_groups[0]['lr'], epoch)
     writer.add_scalar('Learning_Rate_Aux', aux_optimizer.param_groups[0]['lr'], epoch)
 
@@ -139,7 +147,7 @@ def train_net(MODEL_DIR,
         cfg['training']['lr'],
         cfg['training']['lr_aux'],
     )
-
+   
     lr_scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, "min")
     criterion = RateDistortionLoss(cfg['training']['lmbda'])
 
@@ -182,13 +190,13 @@ def train_net(MODEL_DIR,
         loss = test_epoch(epoch, data_loader_test, net, criterion, cfg['dataset']['name'],writer)
         lr_scheduler.step(loss)
         #writer.add_scalar('Loss/train', loss, epoch)
-        writer.add_scalar('EntropyBottleneck_Size', net.entropy_bottleneck._quantized_cdf.size(-1), epoch)
+        # writer.add_scalar('EntropyBottleneck_Size', net.entropy_bottleneck._quantized_cdf.size(-1), epoch)
 
         is_best = loss < best_loss
         best_loss = min(loss, best_loss)
 
         logging.info(f"Epoch {epoch} - Update: {net.update(force=True)}")
-        logging.info(f"Quantized CDF size: {net.entropy_bottleneck._quantized_cdf.size()}")
+        # logging.info(f"Quantized CDF size: {net.entropy_bottleneck._quantized_cdf.size()}")
 
     writer.close()        
 
