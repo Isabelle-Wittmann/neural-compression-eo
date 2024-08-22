@@ -1,11 +1,11 @@
 dataset:
   name: BigEarthNet
-  bands: [0,1,2,3,4,5,6,7,8,9,10,11] #[] #
+  bands: [1,2,3] #[] #
   subset_size: 50000 #50000
   subset_size_test: 500
 
 dataloader:
-  batch_size: 32
+  batch_size: 4
   num_workers: 10
   pin_memory: True
   shuffle: False
@@ -14,8 +14,13 @@ compressai_model:
  pretrained: Trude
  quality: 8
  N: 192 
- M: 64
+ M: 192
  V: 43
+
+preprocessing:
+  coordinate_encoding: 'positional' # embedding
+  coordinate_num_bins: 100
+  coordinate_embedding_dim: 64
 
 training:
   lmbda: 0.5 #Bit-rate distortion parameter 

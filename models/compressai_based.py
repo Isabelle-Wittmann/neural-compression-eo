@@ -22,9 +22,12 @@ from .utils import CoordinatePreprocessor, reshape_to_4d
 class CompressionModelBase(CompressionModel):
     def __init__(self, cfg, input_channels, entropy_channels, **kwargs):
         super().__init__(**kwargs)
+
         self.N = cfg['compressai_model']['N']
         self.M = cfg['compressai_model']['M']
-        self.V = cfg.get('compressai_model', {}).get('V', 128) 
+        self.V = cfg['compressai_model']['V']
+        self.embedding_size = cfg['preprocessing']['coordinate_embedding_dim']
+
         self.entropy_bottleneck = EntropyBottleneck(entropy_channels)
         self.input_channels = input_channels
 
@@ -498,9 +501,10 @@ class MeanScaleHyperprior(ScaleHyperpriorBase):
 
 
 class ScaleHyperpriorMeta(ScaleHyperpriorBase):
-    def __init__(self, cfg, coordinate_preprocessor, **kwargs):
+    def __init__(self, cfg, **kwargs):
         super().__init__(cfg, input_channels=3, **kwargs)
-        self.coordinate_preprocessor = coordinate_preprocessor
+
+        self.coordinate_preprocessor = CoordinatePreprocessor(cfg)
 
         self.h_a_img = nn.Sequential(
             conv(self.M, self.N, stride=1, kernel_size=3),
@@ -509,9 +513,9 @@ class ScaleHyperpriorMeta(ScaleHyperpriorBase):
         )
 
         self.h_a_vec = nn.Sequential(
-            nn.Linear(self.V, 128),
+            nn.Linear(self.embedding_size, self.V),
             nn.ReLU(inplace=True),
-            nn.Linear(128, self.N),
+            nn.Linear(self.V, self.N),
             nn.ReLU(inplace=True),
         )
 
@@ -521,10 +525,11 @@ class ScaleHyperpriorMeta(ScaleHyperpriorBase):
         )
 
     def forward(self, x, v, crs):
+
         y = self.g_a(x)
         z_img = self.h_a_img(y)
         z_vec = self.h_a_vec(v)
-        z_vec = reshape_to_4d(z_vec)
+        z_vec = reshape_to_4d(z_vec, self.N, 4)
         z_joint = z_img * z_vec
         z = self.h_a_joint(z_joint)
         z_hat, z_likelihoods = self.entropy_bottleneck(z)
@@ -536,7 +541,7 @@ class ScaleHyperpriorMeta(ScaleHyperpriorBase):
         y = self.g_a(x)
         z_img = self.h_a_img(y)
         z_vec = self.h_a_vec(v)
-        z_vec = reshape_to_4d(z_vec)
+        z_vec = reshape_to_4d(z_vec, self.N, 4)
         z_joint = z_img * z_vec
         z = self.h_a_joint(z_joint)
 
@@ -549,9 +554,9 @@ class ScaleHyperpriorMeta(ScaleHyperpriorBase):
 
 
 class ScaleHyperpriorMetaOnly(ScaleHyperpriorBase):
-    def __init__(self, cfg, coordinate_preprocessor, **kwargs):
+    def __init__(self, cfg, **kwargs):
         super().__init__(cfg, **kwargs)
-        self.coordinate_preprocessor = coordinate_preprocessor
+        self.coordinate_preprocessor = CoordinatePreprocessor(cfg)
 
         self.h_a_joint = nn.Sequential(
             conv(self.N, self.N),
@@ -561,7 +566,7 @@ class ScaleHyperpriorMetaOnly(ScaleHyperpriorBase):
     def forward(self, x, v, crs):
         y = self.g_a(x)
         z_vec = self.h_a_vec(v)
-        z_vec = reshape_to_4d(z_vec)
+        z_vec = reshape_to_4d(z_vec, self.N, 4)
         z = self.h_a_joint(z_vec)
         z_hat, z_likelihoods = self.entropy_bottleneck(z)
         scales_hat = self.h_s(z_hat)
@@ -571,7 +576,7 @@ class ScaleHyperpriorMetaOnly(ScaleHyperpriorBase):
     def compress(self, x, v, crs):
         y = self.g_a(x)
         z_vec = self.h_a_vec(v)
-        z_vec = reshape_to_4d(z_vec)
+        z_vec = reshape_to_4d(z_vec, self.N, 4)
         z = self.h_a_joint(z_vec)
         z_strings = self.entropy_bottleneck.compress(z)
         z_hat = self.entropy_bottleneck.decompress(z_strings, z.size()[-2:])
@@ -590,13 +595,13 @@ class ScaleHyperpriorMetaOnly(ScaleHyperpriorBase):
 
 
 class ScaleHyperpriorCRS(ScaleHyperpriorMeta):
-    def __init__(self, cfg, coordinate_preprocessor, **kwargs):
-        super().__init__(cfg, coordinate_preprocessor, **kwargs)
+    def __init__(self, cfg, **kwargs):
+        super().__init__(cfg, **kwargs)
         
         self.h_a_vec = nn.Sequential(
-            nn.Linear(3, self.N),
+            nn.Linear(self.embedding_size, self.N),
             nn.ReLU(inplace=True),
-            nn.Linear(self.N, self.N * 16)
+            nn.Linear(self.N, self.N )
         )
 
         self.h_a_joint = nn.Sequential(
@@ -606,12 +611,12 @@ class ScaleHyperpriorCRS(ScaleHyperpriorMeta):
         )
 
     def forward(self, x, v, crs):
-        batch_size = x.size(0)
         y = self.g_a(x)
         z_img = self.h_a_img(y)
         processed_coords = self.coordinate_preprocessor(crs)
         z_vec = self.h_a_vec(processed_coords)
-        embedding_2d = z_vec.view(batch_size, 192, 4, 4)
+        embedding_2d = reshape_to_4d(z_vec, self.N, 4)
+
         combined_features = torch.cat((z_img, embedding_2d), dim=1)
         z = self.h_a_joint(combined_features)
 
@@ -621,12 +626,11 @@ class ScaleHyperpriorCRS(ScaleHyperpriorMeta):
         return {"x_hat": self.g_s(y_hat), "likelihoods": {"y": y_likelihoods, "z": z_likelihoods}}
 
     def compress(self, x, v, crs):
-        batch_size = x.size(0)
         y = self.g_a(x)
         z_img = self.h_a_img(y)
         processed_coords = self.coordinate_preprocessor(crs)
         z_vec = self.h_a_vec(processed_coords)
-        embedding_2d = z_vec.view(batch_size, 192, 4, 4)
+        embedding_2d = reshape_to_4d(z_vec, self.N, 4)
         combined_features = torch.cat((z_img, embedding_2d), dim=1)
         z = self.h_a_joint(combined_features)
         z_strings = self.entropy_bottleneck.compress(z)
@@ -638,12 +642,12 @@ class ScaleHyperpriorCRS(ScaleHyperpriorMeta):
 
 
 class ScaleHyperpriorCRSOnly(ScaleHyperpriorBase):
-    def __init__(self, cfg, coordinate_preprocessor, **kwargs):
+    def __init__(self, cfg, **kwargs):
         super().__init__(cfg, input_channels=3, **kwargs)
-        self.coordinate_preprocessor = coordinate_preprocessor
+        self.coordinate_preprocessor = CoordinatePreprocessor(cfg)
 
         self.h_a_vec = nn.Sequential(
-            nn.Linear(3, 64),
+            nn.Linear(self.embedding_size, self.V),
             nn.ReLU(inplace=True),
             nn.Linear(64, self.N * 16)
         )
