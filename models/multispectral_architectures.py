@@ -1,6 +1,6 @@
 import math
 import torch.nn.functional as f
-
+from .base_architectures import *
 from torch import nn
 
 class ConvolutionalAutoencoder1D(nn.Module):
@@ -560,3 +560,166 @@ class Transformer(nn.Module):
                 nl += 1
 
         return x
+
+
+
+class Conv3d(CompressionModelBase):
+    def __init__(self, cfg, **kwargs):
+        super().__init__(cfg, 3, entropy_channels=cfg['compressai_model']['M'], **kwargs)
+        
+        self.g_a = self.create_g_a([
+            conv(16, self.N),
+            GDN(self.N),
+            conv(self.N, self.N),
+            GDN(self.N),
+            conv(self.N, self.N),
+            GDN(self.N),
+            conv(self.N, self.M),
+        ])
+
+        self.g_s = self.create_g_s([
+            deconv(self.M, self.N),
+            GDN(self.N, inverse=True),
+            deconv(self.N, self.N),
+            GDN(self.N, inverse=True),
+            deconv(self.N, self.N),
+            GDN(self.N, inverse=True),
+            deconv(self.N, 16),
+        ])
+        self.hp_a = self.create_g_a([nn.Conv3d(
+                in_channels=1,
+                out_channels=16,
+                kernel_size=(2, 5, 5),
+                stride=(2, 2, 2),
+                padding=(0, 2, 2),
+            ),
+        
+            # # nn.BatchNorm3d(16),
+            # nn.LeakyReLU(),
+            # nn.Conv3d(
+            #     in_channels=16,
+            #     out_channels=32,
+            #     kernel_size=(5, 5, 5),
+            #     stride=(2, 2, 2),
+            #     padding=(2, 2, 2),
+            # ),
+            # # nn.BatchNorm3d(32),
+            # nn.LeakyReLU(),
+            # _ResBlock(32),
+            # _ResBlock(32),
+            # _ResBlock(32),
+            # nn.Conv3d(
+            #     in_channels=32,
+            #     out_channels=64,
+            #     kernel_size=(5, 5, 5),
+            #     stride=(2, 2, 2),
+            #     padding=(2, 2, 2),
+            # ),
+            # # nn.BatchNorm3d(64),
+            # nn.LeakyReLU(),
+        ])
+
+        self.hp_s = self.create_g_s([nn.Upsample(scale_factor=(2, 4, 4)),
+            # nn.Conv3d(
+            #     in_channels=64,
+            #     out_channels=32,
+            #     kernel_size=(5, 5, 5),
+            #     stride=(2, 2, 2),
+            #     padding=(2, 2, 2),
+            # ),
+            # # nn.BatchNorm3d(32),
+            # nn.LeakyReLU(),
+            # _ResBlock(32),
+            # _ResBlock(32),
+            # _ResBlock(32),
+            # nn.Upsample(scale_factor=(3, 2, 2)),
+            # nn.Conv3d(
+            #     in_channels=32,
+            #     out_channels=16,
+            #     kernel_size=(5, 3, 3),
+            #     stride=(2, 1, 1),
+            #     padding=(2, 1, 1),
+            # ),
+            # # nn.BatchNorm3d(16),
+            # nn.LeakyReLU(),
+            # nn.Upsample(scale_factor=(3, 2, 2)),
+
+            nn.Conv3d(
+                in_channels=16,
+                out_channels=3,
+                kernel_size=(2, 3, 3),
+                stride=(2, 2, 2),
+                padding=(0, 1, 1),  # (2, 1, 1)
+            ),
+            # nn.BatchNorm3d(1),
+            nn.LeakyReLU(),
+        ])
+
+    @property
+    def downsampling_factor(self) -> int:
+        return 2 ** 4
+
+    def forward(self, x, v=None, crs=None):
+        # print(x.shape)
+        x = x.unsqueeze(1)
+        x = self.hp_a(x)
+        x = x.squeeze(2)
+        y = self.g_a(x)
+        
+        y_hat, y_likelihoods = self.entropy_bottleneck(y)
+        
+        x_hat = self.g_s(y_hat)
+        x_hat = x_hat.unsqueeze(2)
+        x_hat = self.hp_s(x_hat)
+        
+        x_hat = x_hat.squeeze(2)
+        # print(x_hat.shape)
+        
+        return {"x_hat": x_hat, "likelihoods": {"y": y_likelihoods}}
+
+    def compress(self, x, v=None, crs=None):
+        x = x.unsqueeze(1)
+        y = self.g_a(x)
+
+        y_strings = self.entropy_bottleneck.compress(y)
+        return {"strings": [y_strings], "shape": y.size()[-3:]}
+
+    def decompress(self, strings, shape):
+        y_hat = self.entropy_bottleneck.decompress(strings[0], shape)
+
+        x_hat = self.g_s(y_hat).clamp_(0, 1)
+        x_hat = x_hat.squeeze(1)
+        return {"x_hat": x_hat}
+
+class _ResBlock(nn.Module):
+    def __init__(self, channels):
+        super(_ResBlock, self).__init__()
+
+        self.act = nn.LeakyReLU()
+
+        self.block = nn.Sequential(*[
+            nn.Conv3d(
+                in_channels=channels,
+                out_channels=channels,
+                kernel_size=(3, 3, 3),
+                stride=(1, 1, 1),
+                padding=(1, 1, 1),
+            ),
+            # nn.BatchNorm3d(channels),
+            self.act,
+            nn.Conv3d(
+                in_channels=channels,
+                out_channels=channels,
+                kernel_size=(3, 3, 3),
+                stride=(1, 1, 1),
+                padding=(1, 1, 1),
+            ),
+            # nn.BatchNorm3d(channels),
+        ])
+
+    def forward(self, x):
+        residual = x
+        out = self.block(x)
+        out += residual
+        out = self.act(out)
+        return out

@@ -5,10 +5,9 @@ import torch
 from datasets.dataloaders import initialize_dataloaders
 from evaluation.handcrafted import *
 from evaluation.neural import *
-from models.compressai_pretrained import *
-from models.compressai_based import *
+from models import *
 from utils import *
-from models.multispectral import *
+
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
 

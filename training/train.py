@@ -6,7 +6,7 @@ from torch.utils.data import DataLoader
 from tensorboardX import SummaryWriter
 from compressai.losses import RateDistortionLoss
 from .utils import *
-from utils import *
+from utils import load_data
 
 logging.basicConfig(level=logging.INFO)
 

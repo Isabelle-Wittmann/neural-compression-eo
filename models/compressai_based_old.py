@@ -10,13 +10,7 @@ import torch
 import torch.nn as nn
 import numpy as np
 
-from compressai.models.base import (
-    SCALES_LEVELS,
-    SCALES_MAX,
-    SCALES_MIN,
-    CompressionModel,
-    get_scale_table,
-)
+from compressai.models.base import CompressionModel
 
 from .utils import LatLongEmbedding, input_fn
 

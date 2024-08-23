@@ -3,9 +3,7 @@ import argparse
 import yaml
 import torch
 from datasets.dataloaders import initialize_dataloaders
-from models.compressai_pretrained import *
-from models.compressai_based import *
-from models.multispectral import *
+from models import *
 from utils import *
 from training.utils import *
 from training.train import *
@@ -51,7 +49,7 @@ if __name__ == '__main__':
         print('__Number CUDA Devices:', torch.cuda.device_count())
         print('__CUDA Device Name:',torch.cuda.get_device_name(0))
         print('__CUDA Device Total Memory [GB]:',torch.cuda.get_device_properties(0).total_memory/1e9)
-        
+
     try:
         current_model = globals()[args.model](cfg).to(device) #
     except KeyError:

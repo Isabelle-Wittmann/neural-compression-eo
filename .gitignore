@@ -3,6 +3,7 @@ visualisations/
 models/reben
 video/
 new_video_stuff.py
+compressai_based_old.py
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
