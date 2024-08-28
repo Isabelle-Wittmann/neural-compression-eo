@@ -19,6 +19,7 @@ class CompressionModelBase(CompressionModel):
         self.V = cfg['compressai_model']['V']
         self.embedding_size = cfg['preprocessing']['coordinate_embedding_dim']
 
+
         self.entropy_bottleneck = EntropyBottleneck(entropy_channels)
         self.input_channels = input_channels
 
@@ -36,7 +37,7 @@ class CompressionModelBase(CompressionModel):
         y_strings = self.entropy_bottleneck.compress(y)
         return {"strings": [y_strings], "shape": y.size()[-2:]}
 
-    def decompress_common(self, strings, shape):
+    def decompress_common(self, strings, shape, crs):
         y_hat = self.entropy_bottleneck.decompress(strings[0], shape)
         x_hat = self.g_s(y_hat).clamp_(0, 1)
         return {"x_hat": x_hat}
@@ -78,8 +79,8 @@ class FactorizedPriorBase(CompressionModelBase):
         y = self.g_a(x)
         return self.compress_common(y)
 
-    def decompress(self, strings, shape):
-        return self.decompress_common(strings, shape)
+    def decompress(self, strings, shape, crs):
+        return self.decompress_common(strings, shape, crs)
 
 
 class FactorizedPrior(FactorizedPriorBase):
@@ -133,7 +134,7 @@ class ScaleHyperpriorBase(FactorizedPriorBase):
         y_strings = self.gaussian_conditional.compress(y, indexes)
         return {"strings": [y_strings, z_strings], "shape": z.size()[-2:]}
 
-    def decompress(self, strings, shape):
+    def decompress(self, strings, shape, crs):
         z_hat = self.entropy_bottleneck.decompress(strings[1], shape)
         scales_hat = self.h_s(z_hat)
         indexes = self.gaussian_conditional.build_indexes(scales_hat)
@@ -189,7 +190,7 @@ class MeanScaleHyperprior(ScaleHyperpriorBase):
         y_strings = self.gaussian_conditional.compress(y, indexes, means=means_hat)
         return {"strings": [y_strings, z_strings], "shape": z.size()[-2:]}
 
-    def decompress(self, strings, shape):
+    def decompress(self, strings, shape, crs):
         z_hat = self.entropy_bottleneck.decompress(strings[1], shape)
         gaussian_params = self.h_s(z_hat)
         scales_hat, means_hat = gaussian_params.chunk(2, 1)

@@ -13,9 +13,11 @@ def initialize_dataloaders(cfg, cfg_data):
 
         train_set =  np.random.choice(len(dataset), cfg['dataset']['subset_size'], replace=False)
         test_set = np.random.choice(len(dataset), cfg['dataset']['subset_size_test'], replace=False)
+        val_set = np.random.choice(len(dataset), cfg['dataset']['subset_size_val'], replace=False)
 
         dataset_train = Subset(dataset,train_set)
         dataset_test = Subset(dataset, test_set)
+        dataset_val = Subset(dataset, val_set)
 
     elif cfg['dataset']['name'] == 'MultiEarth':
         
@@ -33,9 +35,11 @@ def initialize_dataloaders(cfg, cfg_data):
 
         train_set = np.random.choice(len(dataset), cfg['dataset']['subset_size'], replace=False)
         test_set = np.random.choice(len(dataset), cfg['dataset']['subset_size_test'], replace=False)
+        val_set = np.random.choice(len(dataset), cfg['dataset']['subset_size_val'], replace=False)
 
         dataset_train = Subset(dataset, train_set)
         dataset_test = Subset(dataset, test_set)
+        dataset_val = Subset(dataset, val_set)
 
         max_val = 255
 
@@ -65,7 +69,12 @@ def initialize_dataloaders(cfg, cfg_data):
         **cfg['dataloader']
     )
 
-    return data_loader_train, data_loader_test, max_val
+    data_loader_val = DataLoader(
+        dataset_val,
+        **cfg['dataloader']
+    )
+
+    return data_loader_train, data_loader_test, data_loader_val, max_val
     
 
 class TurnTransformKodak(torch.nn.Module):

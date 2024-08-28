@@ -1,5 +1,6 @@
 import logging
 import torch
+import glob
 import os
 import torch.optim as optim
 from torch.utils.data import DataLoader
@@ -7,7 +8,8 @@ from tensorboardX import SummaryWriter
 from compressai.losses import RateDistortionLoss
 from .utils import *
 from utils import load_data
-
+from evaluation.neural import *
+import shutil
 logging.basicConfig(level=logging.INFO)
 
 def train_one_epoch(
@@ -19,19 +21,21 @@ def train_one_epoch(
     epoch: int,
     clip_max_norm: float,
     dataset_name: str,
-    writer: SummaryWriter
+    writer: SummaryWriter,
+    lr_scheduler
 ) -> None:
     model.train()
     device = next(model.parameters()).device
     loss_ls, mse_loss_ls, bpp_loss_ls, aux_loss_ls = [], [], [], []
     for i, d in enumerate(data_loader_train):
 
+
         image, label, crs, date, time = load_data(d, dataset_name, device)
 
         optimizer.zero_grad()
         aux_optimizer.zero_grad()
 
-        out_net = model(image, label, crs)
+        out_net = model(image, None, crs)
         out_criterion = criterion(out_net, image)
         
         out_criterion["loss"].backward()
@@ -75,8 +79,8 @@ def train_one_epoch(
     writer.add_scalar('MSE_Loss/train_per_epoch', avg_mse_loss, epoch)
     writer.add_scalar('Bpp_Loss/train_per_epoch', avg_bpp_loss, epoch)
     writer.add_scalar('Aux_Loss/train_per_epoch', avg_aux_loss, epoch)
-    writer.add_scalar('Learning_Rate', optimizer.param_groups[0]['lr'], epoch)
-    writer.add_scalar('Learning_Rate_Aux', aux_optimizer.param_groups[0]['lr'], epoch)
+    writer.add_scalar('Learning_Rate', lr_scheduler.get_last_lr(), epoch)
+    writer.add_scalar('Learning_Rate_Aux', lr_scheduler.get_last_lr(), epoch)
 
 
 def test_epoch(
@@ -99,7 +103,7 @@ def test_epoch(
         for d in data_loader_test:
             image, label, crs, date, time = load_data(d, dataset_name, device)
 
-            out_net = model(image, label, crs)
+            out_net = model(image, None, crs)
             out_criterion = criterion(out_net, image)
 
             aux_loss.update(model.aux_loss())
@@ -128,7 +132,9 @@ def train_net(MODEL_DIR,
     cfg: dict,
     device: torch.device,
     model_name: str,
-    save: bool = True
+    save: bool = True,
+    checkpoint_interval: int = 5,
+    keep_last_n_checkpoints: int = 1
 ):
     if not os.path.exists(MODEL_DIR):
         os.makedirs(MODEL_DIR)
@@ -148,7 +154,7 @@ def train_net(MODEL_DIR,
         cfg['training']['lr_aux'],
     )
    
-    lr_scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, "min")
+    lr_scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max = cfg['training']['epochs'])
     criterion = RateDistortionLoss(cfg['training']['lmbda'])
 
     # Check if a checkpoint exists
@@ -159,9 +165,11 @@ def train_net(MODEL_DIR,
         aux_optimizer.load_state_dict(checkpoint["aux_optimizer"])
         lr_scheduler.load_state_dict(checkpoint["lr_scheduler"])
         start_epoch = checkpoint.get("epoch", 0) + 1
+        best_loss = checkpoint.get("best_loss", float("inf"))
         print(f"Loaded checkpoint '{filename}' (epoch {start_epoch})")
     else:
         start_epoch = 0
+        best_loss = float("inf")
         print(f"No checkpoint found at '{filename}', starting training from scratch")
 
     best_loss = float("inf")
@@ -185,18 +193,29 @@ def train_net(MODEL_DIR,
             epoch,
             cfg['training']['clip_max_norm'],
             cfg['dataset']['name'],
-            writer
+            writer,
+            lr_scheduler
         )
         loss = test_epoch(epoch, data_loader_test, net, criterion, cfg['dataset']['name'],writer)
         lr_scheduler.step(loss)
-        #writer.add_scalar('Loss/train', loss, epoch)
-        # writer.add_scalar('EntropyBottleneck_Size', net.entropy_bottleneck._quantized_cdf.size(-1), epoch)
 
         is_best = loss < best_loss
-        best_loss = min(loss, best_loss)
+        if is_best:
+            best_loss = loss
+        
+        if epoch % (checkpoint_interval*2) == 0:
+            save_sample_reconstruction(device, data_loader_test.dataset[145], net, os.path.join(MODEL_DIR, 'reconstructions', model_name + '_epoch' + str(epoch)))
+
+        if epoch % checkpoint_interval == 0 or is_best:
+            checkpoint_filename = os.path.join(MODEL_DIR, f"{model_name}_epoch_{epoch}.pth.tar")
+            save_model(checkpoint_filename, net, optimizer, aux_optimizer, lr_scheduler, best_loss, epoch, model_name)
+            if is_best:
+                best_model_filename = os.path.join(MODEL_DIR, f"{model_name}_best.pth.tar")
+                save_model(best_model_filename, net, optimizer, aux_optimizer, lr_scheduler, best_loss, epoch, model_name)
+
+            cleanup_checkpoints(MODEL_DIR, model_name, keep_last_n_checkpoints)
 
         logging.info(f"Epoch {epoch} - Update: {net.update(force=True)}")
-        # logging.info(f"Quantized CDF size: {net.entropy_bottleneck._quantized_cdf.size()}")
 
     writer.close()        
 
@@ -229,3 +248,46 @@ def save_model(MODEL_DIR,
         filename,
     )
 
+def cleanup_checkpoints(MODEL_DIR, model_name, keep_last_n):
+    """Deletes older checkpoints, keeping only the most recent `keep_last_n` checkpoints."""
+    checkpoint_files = sorted(
+        glob.glob(os.path.join(MODEL_DIR, f"{model_name}_epoch_*.pth.tar")),
+        key=os.path.getmtime
+    )
+
+    if len(checkpoint_files) > keep_last_n:
+        for file_to_delete in checkpoint_files[:-keep_last_n]:
+            try:
+                if os.path.isfile(file_to_delete): 
+                    os.remove(file_to_delete)
+                    print(f"Deleted old checkpoint: {file_to_delete}")
+                elif os.path.isdir(file_to_delete):
+                    shutil.rmtree(file_to_delete)
+                    print(f"Deleted old directory: {file_to_delete}")
+                else:
+                    print(f"Skipping deletion, not a file or directory: {file_to_delete}")
+            except OSError as e:
+                print(f"Error deleting file or directory {file_to_delete}: {e}")
+
+
+def save_sample_reconstruction(device, image, model, path):
+
+        image, label, crs, date, time = load_data(image, True, device)
+        rv = model(image.unsqueeze(0), None, crs.unsqueeze(0))
+        decompressed = rv['x_hat']
+
+        fig, axes = plt.subplots(1, 2, figsize=(16, 8))
+        
+        img = image.squeeze()
+        img_dec = decompressed.squeeze()
+
+        img = transforms.ToPILImage()(np.clip(img.cpu().detach()/ 0.3, 0, 1))
+        axes[0].imshow(img)
+        axes[0].title.set_text('Original')
+
+        img_dec = transforms.ToPILImage()(np.clip(img_dec.cpu().detach()/ 0.3, 0, 1))
+        axes[1].imshow(img_dec)
+        axes[1].title.set_text('Reconstruction')
+
+        plt.savefig(path + '_sample_reconstruction.png')
+        plt.close()

@@ -52,7 +52,6 @@ def init_bigearthnet(cfg_path, bands):
     Initialize the BigEarthNet dataset with specified configuration.
     """
     # Load configuration
-
     cfg = load_config(cfg_path)
 
     # Get dataset parameters from the configuration

@@ -247,19 +247,37 @@ class Codec_Tester():
 
         sum_mean = 0
         sum_std = 0
-        global_min = float('inf')
-        global_max = float('-inf')
+        sum_lat = 0
+        sum_lon = 0
+        lat_mean = 13.57538875
+        lon_mean = 51.787555
+        global_min, global_lat_min ,global_lon_min= float('inf'), float('inf'), float('inf')
+        global_max, global_lat_max ,global_lon_max = float('-inf'), float('-inf'), float('-inf')
         count_batch = 0
+        sum_lat_squared_diff = 0
+        sum_lon_squared_diff = 0
 
         for count, data in enumerate(self.dataloader):
             count_batch += 1
-            input = data['image'] if self.is_bigearth_data else data[0]
-            input = input.to(self.device)
+            image, label, crs, date, time = load_data(data, self.is_bigearth_data, self.device)
+            lon = np.array(crs.cpu()[:, 1])
+            lat = np.array(crs.cpu()[:, 0])
+            # lon = lon.to(self.device)
+            # lat = lat.to(self.device)
+
+            input = image
 
             batch_mean = input.mean()  # mean per channel
             batch_std = input.std()    # std dev per channel
             batch_min = input.min()
             batch_max = input.max()
+
+            # sum_lat += lat
+            # sum_lon += lon
+            global_lat_min = min(global_lat_min, lat.item())
+            global_lat_max = max(global_lat_max, lat.item())
+            global_lon_min = min(global_lon_min, lon.item())
+            global_lon_max = max(global_lon_max, lon.item())
 
             sum_mean += batch_mean 
             sum_std += batch_std 
@@ -267,16 +285,26 @@ class Codec_Tester():
             global_min = min(global_min, batch_min.item())
             global_max = max(global_max, batch_max.item())
 
+            sum_lat_squared_diff += (lat - lat_mean) ** 2
+            sum_lon_squared_diff += (lon - lon_mean) ** 2
+
             if count % 1000 == 0:
                 print(f"Processed {count} batches for summarizing stats.")
 
         dataset_mean = sum_mean / count_batch
+        lat_mean = sum_lat / count_batch
+        lon_mean = sum_lon / count_batch
         dataset_std = sum_std / count_batch
+
+        lat_std = (sum_lat_squared_diff / count_batch) ** 0.5
+        lon_std = (sum_lon_squared_diff / count_batch) ** 0.5
 
         print(f"  Dataset-wide Mean: {dataset_mean}")
         print(f"  Dataset-wide Std Dev: {dataset_std}")
         print(f"  Dataset-wide Min: {global_min}")
         print(f"  Dataset-wide Max: {global_max}")
+        print(f"  Lat Std: {lat_std}")
+        print(f"  Lon Std: {lon_std}")
         print("Finished computing dataset-wide statistics.")
 
             
@@ -328,7 +356,7 @@ class Codec_Tester():
             else:
                 band_img = np.clip(band / 0.2, 0, 1)
             
-            # Convert to PIL image for consistency with original code
+            # Convert to PIL image
             img = transforms.ToPILImage()(band_img)
             
             # Plot the image

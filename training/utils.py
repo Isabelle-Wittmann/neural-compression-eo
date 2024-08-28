@@ -1,6 +1,5 @@
 import yaml
 import os 
-import torch
 import torch.nn as nn
 from compressai.optimizers import net_aux_optimizer
 

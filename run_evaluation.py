@@ -11,7 +11,7 @@ from utils import *
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
 
-RESULTS_CSV = os.path.join(current_dir, 'results', 'results_bigearth_12.csv')
+RESULTS_CSV = os.path.join(current_dir, 'results', 'results_bigearth_RGB new.csv')
 
 CONFIG = os.path.join(current_dir, 'config.yaml')
 CONFIG_DATA = os.path.join(current_dir, 'datasets', 'config_bigearthnet.yaml') 
@@ -37,10 +37,55 @@ if __name__ == '__main__':
         cfg['dataloader']['batch_size'] = 1
         print("Batch size was set to 1 for evaluation")
 
-    data_loader_train, data_loader_test, max_value = initialize_dataloaders(cfg, CONFIG_DATA)
+    data_loader_train, data_loader_test, data_loader_val, max_value = initialize_dataloaders(cfg, CONFIG_DATA)
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
-    # try:
+   
+    try:
+        current_model1 = globals()[args.model](cfg).to(device)
+    except KeyError:
+        raise ValueError(f"Unknown model: {args.model}")
+    
+    
+    model_name1 = args.model + '_v' + args.version
+
+    filename1 = os.path.join(MODEL_DIR, str(model_name1) +'.pth.tar')
+
+    if os.path.isfile(filename1):
+        
+        checkpoint = torch.load(filename1, map_location=device)
+        current_model1.load_state_dict(checkpoint["state_dict"], strict=False)
+        # current_model.update(force=True)
+
+
+    tester = Neural_Codec_Tester(data_loader = data_loader_test, 
+                                device = device, 
+                                max_val = 1,
+                                is_bigearth_data = is_bigearth_data,
+                                bpp_per_channel = BPP_PER_CHANNEL)
+    # tester.get_summarising_stats()
+    tester.get_metrics(current_model1)
+    tester.set_name(model_name1)
+    tester.compute_metric_averages()
+    tester.write_results_to_csv(RESULTS_CSV)
+    tester.save_sample_reconstruction(data_loader_test.dataset[145], current_model1, os.path.join(current_dir, 'visualisations/reconstructions', model_name1))
+    tester.flush()
+
+
+    # tester = Pillow_Codec_Tester(data_loader = data_loader_test, 
+    #                         device = device, 
+    #                         max_val = 1,
+    #                         is_bigearth_data = is_bigearth_data,
+    #                         bpp_per_channel = BPP_PER_CHANNEL)
+    # for q in [20]:
+    #     tester.get_metrics('jpeg', q)
+    #     tester.set_name('jpeg')
+    #     tester.compute_metric_averages()
+    #     tester.write_results_to_csv(RESULTS_CSV)
+    #     tester.flush()
+
+
+ # try:
     #     current_model1 = globals()[args.model](cfg).to(device)
     #     current_model2 = globals()[args.model](cfg).to(device)
     #     current_model3 = globals()[args.model](cfg).to(device)
@@ -90,49 +135,6 @@ if __name__ == '__main__':
     # tester.write_results_to_csv(RESULTS_CSV)
     # tester.save_sample_reconstruction(data_loader_test.dataset[145], current_model1, os.path.join(current_dir, 'visualisations/reconstructions', model_name))
     # tester.flush()
-
-    try:
-        current_model1 = globals()[args.model](cfg).to(device)
-    except KeyError:
-        raise ValueError(f"Unknown model: {args.model}")
-    
-    
-    model_name1 = args.model + '_v' + args.version
-
-    filename1 = os.path.join(MODEL_DIR, str(model_name1) +'.pth.tar')
-
-    if os.path.isfile(filename1):
-        
-        checkpoint = torch.load(filename1, map_location=device)
-        current_model1.load_state_dict(checkpoint["state_dict"], strict=False)
-        # current_model.update(force=True)
-
-
-    tester = Neural_Codec_Tester(data_loader = data_loader_test, 
-                                device = device, 
-                                max_val = 1,
-                                is_bigearth_data = is_bigearth_data,
-                                bpp_per_channel = BPP_PER_CHANNEL)
-
-    tester.get_metrics(current_model1)
-    tester.set_name(model_name1)
-    tester.compute_metric_averages()
-    tester.write_results_to_csv(RESULTS_CSV)
-    tester.save_sample_reconstruction(data_loader_test.dataset[145], current_model1, os.path.join(current_dir, 'visualisations/reconstructions', model_name))
-    tester.flush()
-
-
-    # tester = Pillow_Codec_Tester(data_loader = data_loader_test, 
-    #                         device = device, 
-    #                         max_val = 1,
-    #                         is_bigearth_data = is_bigearth_data,
-    #                         bpp_per_channel = BPP_PER_CHANNEL)
-    # for q in [20]:
-    #     tester.get_metrics('jpeg', q)
-    #     tester.set_name('jpeg')
-    #     tester.compute_metric_averages()
-    #     tester.write_results_to_csv(RESULTS_CSV)
-    #     tester.flush()
 
   
   

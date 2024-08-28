@@ -34,7 +34,7 @@ class Neural_Codec_Tester(Codec_Tester):
         x_padded = F.pad(image, pad, mode="constant", value=0)
 
         out_enc = net.compress(x_padded, label, crs) #
-        out_dec = net.decompress(out_enc["strings"], out_enc["shape"])
+        out_dec = net.decompress(out_enc["strings"], out_enc["shape"], crs)
     
         out_dec["x_hat"] = F.pad(out_dec["x_hat"], unpad)
 
@@ -60,7 +60,7 @@ class Neural_Codec_Tester(Codec_Tester):
 
         image, label, crs, date, time = load_data(image, self.is_bigearth_data, self.device)
         
-        _, decompressed = self.forward_pass(image.unsqueeze(0), label, crs, model)
+        _, decompressed = self.forward_pass(image.unsqueeze(0), label, crs.unsqueeze(0), model)
 
         fig, axes = plt.subplots(1, 2, figsize=(16, 8))
         
@@ -147,8 +147,9 @@ class Neural_Codec_Tester_split(Codec_Tester):
     def save_sample_reconstruction(self, image, model, path):
 
         image, label, crs, date, time = load_data(image, self.is_bigearth_data, self.device)
-        
-        _, decompressed = self.forward_pass(image.unsqueeze(0), label, crs, model)
+        print(crs.shape)
+        print(crs.unsqueeze(0).shape)
+        _, decompressed = self.forward_pass(image.unsqueeze(0), label, crs.unsqueeze(0), model)
 
         fig, axes = plt.subplots(1, 2, figsize=(16, 8))
         
