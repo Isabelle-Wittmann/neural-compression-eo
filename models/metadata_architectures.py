@@ -6,7 +6,7 @@ from .base_architectures import *
 
 class ScaleHyperpriorCRSOnly(ScaleHyperpriorBase):
     def __init__(self, cfg, **kwargs):
-        super().__init__(cfg, **kwargs)
+        super().__init__(cfg,input_channels=3, **kwargs)
         self.coordinate_preprocessor = CoordinatePreprocessor(cfg)
         
         self.h_a_vec = nn.Sequential(

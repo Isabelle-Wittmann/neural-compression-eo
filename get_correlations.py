@@ -17,6 +17,7 @@ RESULTS_CSV = os.path.join(current_dir, 'results', 'correlations', 'EarthTest')
 CONFIG = os.path.join(current_dir, 'config.yaml')
 CONFIG_DATA = os.path.join(current_dir, 'datasets', 'config_bigearthnet.yaml') 
 DATA_DIR = '/dccstor/geofm-finetuning/benediktblumenstiel/similarity-search/data'
+
 if __name__ == '__main__':
 
     with open(CONFIG, 'r') as f:

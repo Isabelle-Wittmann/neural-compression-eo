@@ -1,7 +1,7 @@
 dataset:
   name: BigEarthNet
   bands: [1,2,3] 
-  subset_size: 1000
+  subset_size: 100000
   subset_size_test: 500
   subset_size_val: 500
 
@@ -19,7 +19,7 @@ compressai_model:
  V: 64
 
 preprocessing:
-  coordinate_encoding: 'positional_random' # embedding
+  coordinate_encoding: 'positional' # embedding
   coordinate_num_bins: 100
   coordinate_embedding_dim: 64
 

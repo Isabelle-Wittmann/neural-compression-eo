@@ -197,7 +197,7 @@ def train_net(MODEL_DIR,
             lr_scheduler
         )
         loss = test_epoch(epoch, data_loader_test, net, criterion, cfg['dataset']['name'],writer)
-        lr_scheduler.step(loss)
+        lr_scheduler.step()
 
         is_best = loss < best_loss
         if is_best:

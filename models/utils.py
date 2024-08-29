@@ -99,7 +99,9 @@ class PositionalEncodingRandom(nn.Module):
         self.embedding_dim = embedding_dim
 
     def forward(self, lat, lon, device):
-        lat, lon = np.random.normal(size=2)
+        batch_size = lat.shape
+        lat = np.random.normal(size=batch_size)
+        lon = np.random.normal(size=batch_size)
         lat_rad, lon_rad = lat_lon_to_radians(lat, lon)
         encoding = positional_encoding(lat_rad, lon_rad, self.embedding_dim)
 

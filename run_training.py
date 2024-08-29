@@ -24,7 +24,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('-m', '--model', type=str)
     parser.add_argument('-v', '--version', type=str)
-    parser.add_argument('-c', '--config', type=str, default=CONFIG, help="Path to the config file")
+    parser.add_argument('-c', '--config', type=str, help="Path to the config file")
     args = parser.parse_args()
 
     if args.version == 'new':
@@ -33,6 +33,9 @@ if __name__ == '__main__':
         
     else:
         model_name = f"{args.model}_v{args.version}"
+        
+    if args.config:
+        CONFIG = os.path.join(current_dir, args.config, '.yaml')
 
     with open(CONFIG, 'r') as f:
         cfg = yaml.safe_load(f)
