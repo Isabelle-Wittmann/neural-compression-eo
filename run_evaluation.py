@@ -46,7 +46,6 @@ if __name__ == '__main__':
     except KeyError:
         raise ValueError(f"Unknown model: {args.model}")
     
-    
     model_name1 = args.model + '_v' + args.version
 
     filename1 = os.path.join(MODEL_DIR, str(model_name1) +'.pth.tar')

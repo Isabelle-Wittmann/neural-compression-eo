@@ -1,7 +1,7 @@
 dataset:
   name: BigEarthNet
   bands: [1,2,3] 
-  subset_size: 100000
+  subset_size: 1000
   subset_size_test: 500
   subset_size_val: 500
 
@@ -29,7 +29,7 @@ training:
   optim: "Adam"
   lr_aux: 0.0001
   optim_aux: "Adam"
-  epochs: 20
+  epochs: 2
   clip_max_norm: 1.0
   
 randomseed: 2345
