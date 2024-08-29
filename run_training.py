@@ -35,7 +35,7 @@ if __name__ == '__main__':
         model_name = f"{args.model}_v{args.version}"
         
     if args.config:
-        CONFIG = os.path.join(current_dir, args.config, '.yaml')
+        CONFIG = os.path.join(current_dir, args.config + '.yaml')
 
     with open(CONFIG, 'r') as f:
         cfg = yaml.safe_load(f)
