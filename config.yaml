@@ -1,7 +1,7 @@
 dataset:
   name: BigEarthNet
   bands: [1,2,3] 
-  subset_size: 1000
+  subset_size: 100000
   subset_size_test: 500
   subset_size_val: 500
 
@@ -24,7 +24,7 @@ preprocessing:
   coordinate_embedding_dim: 64
 
 training:
-  lmbda: 0.1 #Bit-rate distortion parameter 
+  lmbda: 0.05 #Bit-rate distortion parameter 
   lr: 0.0001
   optim: "Adam"
   lr_aux: 0.0001
