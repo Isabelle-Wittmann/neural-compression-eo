@@ -46,8 +46,12 @@ class ScaleHyperpriorCRSAddLater(ScaleHyperpriorCRSOnly):
     def forward(self, x, v, crs):
         y = self.g_a(x)
         z= self.h_a(y)
+
         processed_coords = self.coordinate_preprocessor(crs)
+        processed_coords = processed_coords.view(-1, 64, 1).squeeze()
+
         z_vec = self.h_a_vec(processed_coords)
+
         embedding_2d = reshape_to_4d(z_vec, self.N, 2)
         z_hat, z_likelihoods = self.entropy_bottleneck(z)
         combined_features = torch.add(z_hat, embedding_2d)
@@ -59,6 +63,7 @@ class ScaleHyperpriorCRSAddLater(ScaleHyperpriorCRSOnly):
         y = self.g_a(x)
         z= self.h_a(y)
         processed_coords = self.coordinate_preprocessor(crs)
+        processed_coords = processed_coords.view(-1, 64, 1).squeeze()
         z_vec = self.h_a_vec(processed_coords)
         embedding_2d = reshape_to_4d(z_vec, self.N, 2)
         z_strings = self.entropy_bottleneck.compress(z)
@@ -71,6 +76,7 @@ class ScaleHyperpriorCRSAddLater(ScaleHyperpriorCRSOnly):
     
     def decompress(self, strings, shape, crs):
         processed_coords = self.coordinate_preprocessor(crs)
+        processed_coords = processed_coords.view(-1, 64, 1).squeeze()
         z_vec = self.h_a_vec(processed_coords)
         embedding_2d = reshape_to_4d(z_vec, self.N, 2)
         z_hat = self.entropy_bottleneck.decompress(strings[1], shape)

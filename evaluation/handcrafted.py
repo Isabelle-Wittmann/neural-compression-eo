@@ -1,4 +1,4 @@
-from evaluation.base_class import Codec_Tester
+from evaluation.base_class import CodecTester
 import sys
 import os
 import io
@@ -12,7 +12,7 @@ from torchvision import transforms
 import subprocess
 
 
-class Pillow_Codec_Tester(Codec_Tester):
+class PillowCodecTester(CodecTester):
     def tensor_pillow_encode(self, img_tensor, quality_layers, fmt, bpp_per_channel):
 
         # Check if the input is a batch of tensors
@@ -59,7 +59,7 @@ class Pillow_Codec_Tester(Codec_Tester):
                 print()
             
 
-class Binary_Codec_Tester(Codec_Tester):
+class BinaryCodecTester(CodecTester):
 
     def filesize(self, filepath):
         return os.stat(filepath).st_size
@@ -124,7 +124,7 @@ class Binary_Codec_Tester(Codec_Tester):
                 self.img_stats(decompressed)
                 print()
 
-class Binary_Codec_Tester_Multispectral(Binary_Codec_Tester):
+class BinaryCodecTesterMultispectral(BinaryCodecTester):
 
     def read_image(self, filepath, mode=None):
         return gdal.Open(filepath).ReadAsArray() 
@@ -149,7 +149,7 @@ class Binary_Codec_Tester_Multispectral(Binary_Codec_Tester):
             for i in range(image.shape[1]):
                 dst.write(image[0][i]*255, i + 1)  # Write each channel
 
-class Binary_Codec_Tester_RGB(Binary_Codec_Tester):
+class BinaryCodecTesterRGB(BinaryCodecTester):
 
     def read_image(self, filepath, mode="RGB"):
         return Image.open(filepath).convert(mode)
@@ -158,7 +158,7 @@ class Binary_Codec_Tester_RGB(Binary_Codec_Tester):
         image = transforms.ToPILImage()(image)
         image.save(temp_image_path, optimize = False, compress_level = 0)
 
-class BCT_RGB_Magick(Binary_Codec_Tester_RGB):
+class BCTRGBMagick(BinaryCodecTesterRGB):
     def get_encode_cmd(self, in_filepath, quality, out_filepath):
         return ["magick", "convert", in_filepath, "-quality", str(quality), "-strip", out_filepath]
 

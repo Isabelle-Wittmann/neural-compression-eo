@@ -9,7 +9,7 @@ from utils import *
 import matplotlib.pyplot as plt
 from torchvision import transforms
 
-class Codec_Tester():
+class CodecTester():
     def __init__(self, data_loader, device, max_val, is_bigearth_data, bpp_per_channel):
         self.name = 'Undefined'
         self.dataloader = data_loader
@@ -139,7 +139,6 @@ class Codec_Tester():
 
         image = image.cpu().numpy() if torch.is_tensor(image) else image
         
-
         num_bands = image.shape[0]  # Assuming shape is (bands, height, width)
         
         for i in range(num_bands):

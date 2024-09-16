@@ -50,6 +50,7 @@ def initialize_dataloaders(cfg, cfg_data):
 
         dataset_train = ImageFolder(root='./u/iwittmann/data/Kodak/', transform=transform)
         dataset_test = ImageFolder(root='./u/iwittmann/data/Kodak/', transform=transform)
+        dataset_val = ImageFolder(root='./u/iwittmann/data/Kodak/', transform=transform)
         train_set = list(range(0,24))
         dataset=dataset_train
 

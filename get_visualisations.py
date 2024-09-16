@@ -8,11 +8,11 @@ from utils import *
 current_dir = os.path.dirname(os.path.abspath(__file__))
 
 # Define paths relative to the current script directory
-RESULTS_CSV = os.path.join(current_dir, 'results', 'results_bigearth_RGB new.csv')
-OUTPUT_DIR = os.path.join(current_dir, 'visualisations', 'metadata')
+RESULTS_CSV = os.path.join(current_dir, 'results', 'results_bottleneck.csv')
+OUTPUT_DIR = os.path.join(current_dir, 'visualisations', 'bottleneck')
 
-MODEL_LIST = [
-    'jpeg', 'Bmshj2018_factorized_pretrained', 'FactorizedPrior',  'ScaleHyperprior_0001',  'ScaleHyperpriorCRSCatLater', 'ScaleHyperpriorCRSAddLater']
+MODEL_LIST = ['FactorizedPrior_8', 'FactorizedPrior_16', 'FactorizedPrior_32', 'FactorizedPrior_64', 'FactorizedPrior_320'
+              ]
 
 if __name__ == '__main__':
 

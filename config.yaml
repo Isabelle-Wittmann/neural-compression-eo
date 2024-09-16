@@ -13,18 +13,18 @@ dataloader:
 
 compressai_model:
  pretrained: True
- quality: 8
+ quality: 6
  N: 192 
  M: 320
- V: 64
+ V: 8
 
 preprocessing:
-  coordinate_encoding: 'positional_random' # embedding
+  coordinate_encoding: 'season' # embedding
   coordinate_num_bins: 100
   coordinate_embedding_dim: 64
 
 training:
-  lmbda: 0.05 #Bit-rate distortion parameter 
+  lmbda: 0.25 #Bit-rate distortion parameter 
   lr: 0.0001
   optim: "Adam"
   lr_aux: 0.0001

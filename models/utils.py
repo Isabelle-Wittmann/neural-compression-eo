@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import numpy as np 
+from geoclip import LocationEncoder
 
 # BigEarthNet Range
 lat_min, lat_max = 36.838 , 70.092 
@@ -28,6 +29,16 @@ class LatLongEmbedding(nn.Module):
         
         return combined_embeds
 
+class SeasonEmbedding(nn.Module):
+    def __init__(self, embedding_dim):
+        super(SeasonEmbedding, self).__init__()
+
+        self.date = nn.Embedding(4, 16)
+    
+    def forward(self,date):
+        
+        return self.date(date)
+
 def input_fn(lat, lon):
     # latitude and longitude ranges for BigEarthNet
 
@@ -45,6 +56,53 @@ def input_fn(lat, lon):
     lon_indices = torch.tensor(lon_indices, dtype=torch.long)
 
     return lat_indices, lon_indices
+
+def input_date(date):
+    # latitude and longitude ranges for BigEarthNet
+    season = []
+    if len(date[0]) > 1:
+        for i in range(0, len(date)):
+            month = date[i][5:7]
+            if month in ['12','01','02']:
+                season += [1]
+            elif month in ['03','04','05']:
+                season += [2]
+            elif month in ['06','07','08']:
+                season+=[3]
+            elif month in ['09','10','11']:
+                season += [0]
+            else:
+                print(date[i])
+                print("Error in month")
+    else:
+        month = date[5:7]
+        if month in ['12','01','02']:
+            season += [1]
+        elif month in ['03','04','05']:
+            season += [2]
+        elif month in ['06','07','08']:
+            season+=[3]
+        elif month in ['09','10','11']:
+            season += [0]
+        else:
+            print(date[i])
+            print("Error in month")
+
+    # Convert the list to a tensor
+    season = torch.tensor(season)
+
+    # One-hot encode the tensor
+    one_hot_tensor = torch.nn.functional.one_hot(season, num_classes=4)
+
+    # Convert to a float tensor if needed (one-hot encoding by default creates a LongTensor)
+    # one_hot_tensor = one_hot_tensor.float()
+
+
+    # # indices to tensors
+    # lat_indices = torch.tensor(lat_indices, dtype=torch.long)
+    # lon_indices = torch.tensor(lon_indices, dtype=torch.long)
+
+    return one_hot_tensor
 
 def reshape_to_4d(input_tensor, channel_dim, spatial_dim):
     if input_tensor.dim() > 2:
@@ -80,6 +138,21 @@ def positional_encoding(lat_rad, lon_rad, d_model=64):
     
     return encoding
 
+
+class GeoClipEncoder():
+    def __init__(self, embedding_dim):
+        self.embedding_dim = embedding_dim
+        self.gps_encoder = LocationEncoder()
+
+    def forward(self, lat, lon, device):
+
+        print(lat.shape)
+        gps_data = torch.Tensor(np.stack((lat, lon), axis=1))
+        print(gps_data.shape)
+        gps_embeddings = self.gps_encoder(gps_data)
+        print(gps_embeddings.shape)
+
+        return gps_embeddings
 
 class PositionalEncoding(nn.Module):
     def __init__(self, embedding_dim):
@@ -135,11 +208,26 @@ class EmbeddingLayer(nn.Module):
         return embeddings
 
 
+class EmbeddingLayerSeason(nn.Module):
+    def __init__(self, embedding_dim):
+        super().__init__()
+        self.embedding_dim = embedding_dim
+        self.embed = SeasonEmbedding(self.embedding_dim)
+        
+    def forward(self, date, device):
+        tensor = input_date(date)
+
+        embeddings = self.embed(tensor.to(device))
+        
+        return embeddings
+
+
 class CoordinatePreprocessor(nn.Module):
     def __init__(self, cfg):
         super().__init__()
 
         method = cfg['preprocessing']['coordinate_encoding']
+        print(method)
         num_bins = cfg['preprocessing']['coordinate_num_bins']
         embedding_dim = cfg['preprocessing']['coordinate_embedding_dim']
 
@@ -151,14 +239,21 @@ class CoordinatePreprocessor(nn.Module):
             self.preprocessor = PositionalEncoding(embedding_dim=embedding_dim)
         elif method == 'positional_random':
             self.preprocessor = PositionalEncodingRandom(embedding_dim=embedding_dim)
+        elif method == 'geoclip':
+            self.preprocessor = GeoClipEncoder(embedding_dim=embedding_dim)
+        elif method == 'season':
+            self.preprocessor = EmbeddingLayerSeason(embedding_dim=embedding_dim)
         
         else:
             raise ValueError(f"Unknown method: {method}")
 
     def forward(self, crs):
-        device = crs.device
-        lon = np.array(crs.cpu()[:, 0])
-        lat = np.array(crs.cpu()[:, 1])
-        lat, lon = standardize_lat_lon(lat, lon)
+        # device = crs.device
+        # lon = np.array(crs.cpu()[:, 0])
+        # lat = np.array(crs.cpu()[:, 1])
+        # lat, lon = standardize_lat_lon(lat, lon)
 
-        return self.preprocessor(lat, lon, device)
+        # return self.preprocessor.forward(lat, lon, device)
+
+        
+        return self.preprocessor.forward(crs, 'cuda')

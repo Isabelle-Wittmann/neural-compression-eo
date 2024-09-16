@@ -41,6 +41,11 @@ class CompressionModelBase(CompressionModel):
         y_hat = self.entropy_bottleneck.decompress(strings[0], shape)
         x_hat = self.g_s(y_hat).clamp_(0, 1)
         return {"x_hat": x_hat}
+    
+    def embedding(self, x):
+        y = self.g_a(x)
+        y_hat, y_likelihoods = self.entropy_bottleneck(y)
+        return y, y_hat, self.entropy_bottleneck._quantized_cdf
 
 class FactorizedPriorBase(CompressionModelBase):
     def __init__(self, cfg, input_channels, **kwargs):
@@ -87,6 +92,42 @@ class FactorizedPrior(FactorizedPriorBase):
     def __init__(self, cfg, **kwargs):
         super().__init__(cfg, input_channels=3, entropy_channels=cfg['compressai_model']['M'], **kwargs)
 
+class FactorizedPriorBaseSlim(CompressionModelBase):
+    def __init__(self, cfg, input_channels, **kwargs):
+        super().__init__(cfg, input_channels, **kwargs)
+        
+        self.g_a = self.create_g_a([
+            conv(input_channels, self.N),
+            GDN(self.N),
+            conv(self.N, self.M),
+        ])
+
+        self.g_s = self.create_g_s([
+            deconv(self.M, self.N),
+            GDN(self.N, inverse=True),
+            deconv(self.N, input_channels),
+        ])
+
+    @property
+    def downsampling_factor(self) -> int:
+        return 2 ** 4
+
+    def forward(self, x, v=None, crs=None):
+        y = self.g_a(x)
+        y_hat, y_likelihoods = self.entropy_bottleneck(y)
+        return self.forward_common(x, y_hat, y_likelihoods)
+
+    def compress(self, x, v=None, crs=None):
+        y = self.g_a(x)
+        return self.compress_common(y)
+
+    def decompress(self, strings, shape, crs):
+        return self.decompress_common(strings, shape, crs)
+
+
+class FactorizedPriorSlim(FactorizedPriorBaseSlim):
+    def __init__(self, cfg, **kwargs):
+        super().__init__(cfg, input_channels=3, entropy_channels=cfg['compressai_model']['M'], **kwargs)
 
 class FactorizedPrior12Channel(FactorizedPriorBase):
     def __init__(self, cfg, **kwargs):

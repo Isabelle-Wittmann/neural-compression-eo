@@ -33,34 +33,53 @@ def flatten(values):
         else:
             yield item
 
-def plot_rate_distortion(names, bpp, psnr, psnr_variance, bpp_variance, path, mode, fig_size=(14, 10)):
+def plot_rate_distortion(names, bpp, psnr, psnr_variance, bpp_variance, path, mode, fig_size=(12, 8)):
+
+    import numpy as np
+    from sklearn.preprocessing import PolynomialFeatures
+    from sklearn.linear_model import LinearRegression
+    from sklearn.pipeline import make_pipeline
 
     plt.figure(dpi=600)
+    _, axes = plt.subplots(1, 1, figsize=fig_size)
 
-    fig, axes = plt.subplots(1, 1, figsize=fig_size)
-
-   # Convert all values to floats
+    # Convert all values to floats
     all_bpp_values = [float(value) for value in flatten(bpp.values())]
     all_psnr_values = [float(value) for value in flatten(psnr.values())]
     
-    xlim = (min(all_bpp_values) * 0.85, max(all_bpp_values) * 1.25)
-    ylim = (min(all_psnr_values) * 0.95, max(all_psnr_values) * 1.05)
+    xlim = (min(all_bpp_values) * 0.85, max(all_bpp_values) * 1.1)
+    ylim = (min(all_psnr_values) * 0.97, max(all_psnr_values) * 1.03)
 
     # Rate-Distortion Plot
     if mode == 'scatter':
         plt.figtext(.5, 0., '(upper-left is better)', fontsize=12, ha='center')
-        for name in list(set(names)):
-            axes.scatter(bpp[name], psnr[name], label=name)
+        for name in sorted(list(set(names))):
+            # Plot faded scatter points
+            axes.scatter(bpp[name], psnr[name], label=name) #, alpha=0.1)
+            # print(len(bpp[name]))
+            # print(len(bpp[name][0]))
+            # bpp_values = np.array(bpp[name], dtype=float)
+            # print()
+            # psnr_values = np.array(psnr[name], dtype=float)
+
+            # # Fit and plot a regression line (using polynomial regression for flexibility)
+            # bpp_array = bpp_values.reshape(-1, 1)
+            # psnr_array = psnr_values
+            # model = make_pipeline(PolynomialFeatures(degree=3), LinearRegression())
+            # model.fit(bpp_array, psnr_array)
+            # bpp_range = np.linspace(min(bpp[name]), max(bpp[name]), 100).reshape(-1, 1)
+            # psnr_pred = model.predict(bpp_range)
+            # axes.plot(bpp_range, psnr_pred, linestyle='-', linewidth=2, label=f'{name} (fit)')
     elif mode == 'error':
-        for name in list(set(names)):
+        for name in sorted(list(set(names))):
             axes.errorbar(bpp[name], psnr[name], xerr=bpp_variance[name], yerr=psnr_variance[name], linestyle='--', marker='o', label=name, linewidth=2, capsize=6)
         axes.set_title('Rate-Distortion with Standard Deviation Error Bars')
         error_info = 'Error bars represent ±1 standard deviation'
         plt.figtext(0.5, 0.02, error_info, wrap=True, horizontalalignment='center', fontsize=10)
 
     elif mode == 'normal':
-        for name in list(set(names)):
-            axes.plot(bpp[name], psnr[name], linestyle='--', marker='o', label=name, linewidth=2)
+        for name in sorted(list(set(names))):
+            axes.plot(bpp[name], psnr[name], linestyle='--', marker='o', label=name, linewidth=2, alpha=0.85)
 
     axes.legend(loc='best')
     axes.set_ylabel('PSNR [dB]')
@@ -130,7 +149,10 @@ def evaluate_and_visualize_results(model_names, csv_path, output_dir):
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
 
+   
     names, psnr_avg, psnr_variance, bpp_avg_est, bpp_avg, bpp_variance, band_psnr_avg, mse_avg, mse_variance, band_mse_avg, psnr_all, bpp_all = read_csv_new(csv_path)
+
+    # names.sort()
 
     # Filter data based on defined model_names
     indices = [i for i, name in enumerate(names) if name in model_names]

@@ -62,7 +62,6 @@ class SpectralAngle(nn.Module):
         return sa_degrees
 
 
-
 class PeakSignalToNoiseRatio(nn.Module):
     def __init__(self, max_val=1.0):
         super(PeakSignalToNoiseRatio, self).__init__()
