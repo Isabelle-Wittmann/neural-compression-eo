@@ -27,6 +27,7 @@ def train_one_epoch(
     model.train()
     device = next(model.parameters()).device
     loss_ls, mse_loss_ls, bpp_loss_ls, aux_loss_ls = [], [], [], []
+
     for i, d in enumerate(data_loader_train):
 
         image, label, crs, date, time = load_data(d, dataset_name, device)
@@ -35,6 +36,7 @@ def train_one_epoch(
         aux_optimizer.zero_grad()
 
         out_net = model(image, crs, date)
+
         out_criterion = criterion(out_net, image)
         
         out_criterion["loss"].backward()
@@ -272,7 +274,7 @@ def cleanup_checkpoints(MODEL_DIR, model_name, keep_last_n):
 def save_sample_reconstruction(device, image, model, path):
 
         image, label, crs, date, time = load_data(image, True, device)
-        rv = model(image.unsqueeze(0), crs.unsqueeze(0), date.unsqueeze(0)) 
+        rv = model(image.unsqueeze(0), crs.unsqueeze(0), date) 
         decompressed = rv['x_hat']
 
         fig, axes = plt.subplots(1, 2, figsize=(16, 8))

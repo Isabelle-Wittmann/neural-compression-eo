@@ -4,6 +4,10 @@ import matplotlib.pyplot as plt
 from collections import defaultdict
 import os
 import seaborn as sns
+import numpy as np
+from sklearn.preprocessing import PolynomialFeatures
+from sklearn.linear_model import LinearRegression
+from sklearn.pipeline import make_pipeline
 
 def read_csv_new(filepath):
 
@@ -34,11 +38,6 @@ def flatten(values):
             yield item
 
 def plot_rate_distortion(names, bpp, psnr, psnr_variance, bpp_variance, path, mode, fig_size=(12, 8)):
-
-    import numpy as np
-    from sklearn.preprocessing import PolynomialFeatures
-    from sklearn.linear_model import LinearRegression
-    from sklearn.pipeline import make_pipeline
 
     plt.figure(dpi=600)
     _, axes = plt.subplots(1, 1, figsize=fig_size)

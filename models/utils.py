@@ -22,6 +22,7 @@ class LatLongEmbedding(nn.Module):
         self.lon_embedding = nn.Embedding(lon_bins, embedding_dim)
     
     def forward(self, latitudes, longitudes):
+        
         lat_embeds = self.lat_embedding(latitudes)
         lon_embeds = self.lon_embedding(longitudes)
         
@@ -234,7 +235,7 @@ class CoordinatePreprocessor(nn.Module):
         if method == 'sincos':
             self.preprocessor = SinCosEncoding()
         elif method == 'embedding':
-            self.preprocessor = EmbeddingLayer(num_bins=num_bins, embedding_dim=embedding_dim)
+            self.preprocessor = EmbeddingLayer(num_bins=num_bins, embedding_dim=num_bins)
         elif method == 'positional':
             self.preprocessor = PositionalEncoding(embedding_dim=embedding_dim)
         elif method == 'positional_random':
@@ -248,12 +249,11 @@ class CoordinatePreprocessor(nn.Module):
             raise ValueError(f"Unknown method: {method}")
 
     def forward(self, crs):
-        # device = crs.device
-        # lon = np.array(crs.cpu()[:, 0])
-        # lat = np.array(crs.cpu()[:, 1])
-        # lat, lon = standardize_lat_lon(lat, lon)
+        device = crs.device
+        lon = np.array(crs.cpu()[:, 0])
+        lat = np.array(crs.cpu()[:, 1])
+        lat, lon = standardize_lat_lon(lat, lon)
 
-        # return self.preprocessor.forward(lat, lon, device)
+        return self.preprocessor.forward(lat, lon, device)
 
-        
-        return self.preprocessor.forward(crs, 'cuda')
+        # return self.preprocessor.forward(crs, 'cuda')

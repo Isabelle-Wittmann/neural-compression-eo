@@ -10,10 +10,7 @@ from utils import *
 
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
-
-RESULTS_CSV = os.path.join(current_dir, 'results', 'results_bottleneck.csv')
-
-CONFIG = os.path.join(current_dir, 'config.yaml')
+RESULTS_CSV = os.path.join(current_dir, 'results', 'results_bottleneck_new.csv')
 CONFIG_DATA = os.path.join(current_dir, 'datasets', 'config_bigearthnet.yaml') 
 DATA_DIR = '/dccstor/geofm-finetuning/benediktblumenstiel/similarity-search/data'
 MODEL_DIR = os.path.join(current_dir, 'results', 'models')
@@ -25,7 +22,7 @@ if __name__ == '__main__':
     parser.add_argument('-m', '--model', type=str)
     parser.add_argument('-v', '--version', type=str)
     args = parser.parse_args()
-
+    CONFIG = os.path.join(current_dir, 'results/configs', str(args.model) + '_v' + str(args.version) + '_config3.yaml')
     with open(CONFIG, 'r') as f:
         cfg = yaml.safe_load(f)
 
@@ -71,10 +68,10 @@ if __name__ == '__main__':
                                 is_bigearth_data = is_bigearth_data,
                                 bpp_per_channel = BPP_PER_CHANNEL)
     # tester.get_summarising_stats()
-    tester.get_metrics(current_model1, os.path.join(current_dir, 'visualisations/latents'))
     tester.set_name(model_name1)
+    tester.get_metrics(current_model1, os.path.join(current_dir, 'visualisations/latents'), True)
     tester.compute_metric_averages()
-    tester.write_results_to_csv(RESULTS_CSV)
+    tester.write_results_to_csv(RESULTS_CSV, name= 'test')
     # # tester.save_sample_reconstruction(data_loader_test.dataset[145], current_model1, os.path.join(current_dir, 'visualisations/reconstructions', model_name1))
     # tester.flush()
 

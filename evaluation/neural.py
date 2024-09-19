@@ -14,6 +14,12 @@ from compressai.ops import compute_padding
 from evaluation.base_class import CodecTester 
 from utils import load_data
 
+import torch
+import numpy as np
+from sklearn.cluster import KMeans
+from sklearn.decomposition import PCA
+from sklearn.manifold import TSNE
+import matplotlib.pyplot as plt
 
 logging.basicConfig(level=logging.INFO)
 
@@ -41,7 +47,7 @@ class NeuralCodecTester(CodecTester):
         return bpp.item()
     
     def forward_pass(
-        self, image: torch.Tensor, label: torch.Tensor, crs: torch.Tensor, net: torch.nn.Module
+        self, image: torch.Tensor, crs: torch.Tensor, date: str, net: torch.nn.Module
     ) -> Tuple[float, torch.Tensor]:
         """
         Performs a forward pass through the network and computes the BPP.
@@ -55,13 +61,13 @@ class NeuralCodecTester(CodecTester):
         Returns:
             Tuple[float, torch.Tensor]: The BPP value and the reconstructed image tensor.
         """
-        out_net = net(image, label, crs)
+        out_net = net(image, crs, date)
         bpp = self.compute_bpp(out_net)
         bpp = bpp / image.size(1) if self.bpp_per_channel else bpp
         return bpp, out_net['x_hat']
 
     def inference(
-        self, image: torch.Tensor, label: torch.Tensor, crs: torch.Tensor, net: torch.nn.Module
+        self, image: torch.Tensor, crs: torch.Tensor, date: str, net: torch.nn.Module
     ) -> float:
         """
         Performs model inference and computes the BPP.
@@ -77,7 +83,7 @@ class NeuralCodecTester(CodecTester):
         """
         pad, unpad = compute_padding(self.height, self.width, min_div=2 ** 6)
         x_padded = F.pad(image, pad, mode="constant", value=0)
-        out_enc = net.compress(x_padded, label, crs)
+        out_enc = net.compress(x_padded, crs, date)
         total_bits = sum(len(s) * 8 for s in out_enc["strings"][0])
         bpp = total_bits / self.num_pixels
         return bpp
@@ -287,7 +293,7 @@ class NeuralCodecTester(CodecTester):
             path (str): The directory path to save the images.
         """
         image, label, crs, date, time = load_data(image, self.is_bigearth_data, self.device)
-        _, decompressed = self.forward_pass(image.unsqueeze(0), label, crs.unsqueeze(0), model)
+        _, decompressed = self.forward_pass(image.unsqueeze(0), crs.unsqueeze(0), date, model)
 
         fig, axes = plt.subplots(1, 2, figsize=(16, 8))
 
@@ -313,6 +319,27 @@ class NeuralCodecTester(CodecTester):
         plt.savefig(os.path.join(path, 'sample_reconstruction.png'))
         plt.close()
 
+    def cluster_latents(self, path, name, k = 5):
+        latent_data = np.stack(self.latents)
+        print(latent_data.shape)
+        kmeans = KMeans(n_clusters=k, random_state=0)
+        labels = kmeans.fit_predict(latent_data)
+
+        # Dimensionality reduction using PCA
+        pca = PCA(n_components=2)
+        data_pca = pca.fit_transform(latent_data)
+
+        # Visualization using PCA
+        plt.figure(figsize=(8, 6))
+        scatter = plt.scatter(data_pca[:, 0], data_pca[:, 1], c=labels, cmap='viridis')
+        plt.title('PCA of Flattened Tensors')
+        plt.xlabel('Principal Component 1')
+        plt.ylabel('Principal Component 2')
+        plt.legend(*scatter.legend_elements(), title="Clusters")
+ 
+        plt.savefig(os.path.join(path, f'{name}_flattened_histogram.png'))
+        plt.close()
+
     def get_metrics(self, model, path: str, save_pmfs: bool) -> None:
         """
         Evaluates the model over the dataset and computes various metrics.
@@ -324,24 +351,26 @@ class NeuralCodecTester(CodecTester):
         with torch.no_grad():
             model.eval()
             entropy_model = model.entropy_bottleneck
+            print(model.measure_channel_influence())
             pmf, normscales = self.extract_general_pmf(entropy_model)
 
             if save_pmfs:
-                self.save_pmfs(pmf, path, 'pmfs')
+                self.save_pmfs(pmf, path, self.name)
 
             # latents_sum = None
             pmf_max = pmf.shape[1]
 
             for count, data in enumerate(self.dataloader):
                 image, label, crs, date, time = load_data(data, self.is_bigearth_data, self.device)
-                bpp_est, decompressed = self.forward_pass(image, label, crs, model)
+                bpp_est, decompressed = self.forward_pass(image, crs, date, model)
                 self.bpp_est_all.append(bpp_est)
-                self.bpp_all.append(self.inference(image, label, crs, model))
+                self.bpp_all.append(self.inference(image, crs, date, model))
                 self.compute_distortion_metrics(image.squeeze(), decompressed.squeeze())
 
-                y, y_hat, _ = model.embedding(image)
+                y, y_hat, _ = model.embedding(image, crs, date)
                 y_hat_norm = y_hat - normscales
                 y_hat_norm = torch.clamp(y_hat_norm, min=0, max=pmf_max)
+                self.latents.append(y_hat_norm.view(-1).cpu().numpy())
 
                 # if latents_sum is None:
                 #     latents_sum = y_hat_norm.clone()
@@ -352,10 +381,11 @@ class NeuralCodecTester(CodecTester):
                     logging.info(f"Processed {count} images")
 
             # average_latents = latents_sum / (count + 1)
-            # name = self.name + '_' +str(index)
+            #name = self.name + '_' +str(index)
             # self.save_latents(latents, path, name)
             # self.save_latents_histogram(latents, path, name, pmf_max)
             # self.save_flattened_latent_histogram(latents, path, name)
+            self.cluster_latents(path, self.name, k=5)
 
 
 class NeuralCodecTesterSplit(NeuralCodecTester):

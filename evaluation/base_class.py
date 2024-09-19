@@ -24,6 +24,7 @@ class CodecTester():
         self.correlation_per_image = []
         self.psnr_per_band_all = {}
         self.mse_per_band_all = {}
+        self.latents = []
 
         self.set_dims(next(iter(data_loader))['image'] if self.is_bigearth_data else next(iter(data_loader))[0])
         
@@ -49,7 +50,7 @@ class CodecTester():
         
         # Determine which dimension is which
         for i, dim in enumerate(dims):
-            if 1 <= dim <= 14:
+            if 1 <= dim <= 12:
                 self.bands = dim
                 self.bands_dim = i
             elif  self.height is None or dim > self.height:
@@ -107,7 +108,7 @@ class CodecTester():
     def set_name(self, name):
         self.name = name
     
-    def write_results_to_csv(self, csv_dir):
+    def write_results_to_csv(self, csv_dir, name):
 
         file_exists = os.path.isfile(csv_dir)
 
@@ -120,20 +121,19 @@ class CodecTester():
             # Write header only if the file is new or empty
             if not file_exists or first_char == '':
                 header = [
-                    'name', 'psnr_avg', 'psnr_variance', 'bpp_avg_est', 'bpp_avg', 'bpp_variance', 'mse_avg', 'mse_variance'
+                    'name', 'name_org','psnr_avg', 'psnr_variance', 'bpp_avg_est', 'bpp_avg', 'bpp_variance', 'mse_avg', 'mse_variance'
                 ] + [f'psnr_band_{i}_avg' for i in range(len(self.psnr_band_avg))] + [f'mse_band_{i}_avg' for i in range(len(self.mse_band_avg))] + ['psnr_all', 'bpp_all']
                 writer.writerow(header)
             
             # Write the data row
             row = [
-                self.name, self.psnr_avg, self.psnr_variance, self.bpp_avg_est, self.bpp_avg, self.bpp_variance, 
+                name, self.name, self.psnr_avg, self.psnr_variance, self.bpp_avg_est, self.bpp_avg, self.bpp_variance, 
                 self.mse_avg, self.mse_variance
             ] + [self.psnr_band_avg[i] for i in range(len(self.psnr_band_avg))] + [self.mse_band_avg[i] for i in range(len(self.mse_band_avg))] + [self.psnr_all, self.bpp_all]
             writer.writerow(row)
 
     def convert_to_8bit(self, image):
         return np.clip((image / self.max_val) * 255.0, 0, 255).astype(np.uint8)
-
 
     def img_stats(self, image):
 
@@ -213,7 +213,6 @@ class CodecTester():
         Save the computed correlations for all band combinations to a CSV file.
         """
 
-
         with open(file_path_agg, 'w', newline='') as csvfile:
             writer = csv.writer(csvfile)
             
@@ -248,21 +247,21 @@ class CodecTester():
         sum_std = 0
         sum_lat = 0
         sum_lon = 0
-        lat_mean = 13.57538875
-        lon_mean = 51.787555
+        # lat_mean = 13.57538875
+        # lon_mean = 51.787555
         global_min, global_lat_min ,global_lon_min= float('inf'), float('inf'), float('inf')
         global_max, global_lat_max ,global_lon_max = float('-inf'), float('-inf'), float('-inf')
         count_batch = 0
-        sum_lat_squared_diff = 0
-        sum_lon_squared_diff = 0
+        # sum_lat_squared_diff = 0
+        # sum_lon_squared_diff = 0
 
         for count, data in enumerate(self.dataloader):
             count_batch += 1
             image, label, crs, date, time = load_data(data, self.is_bigearth_data, self.device)
             lon = np.array(crs.cpu()[:, 1])
             lat = np.array(crs.cpu()[:, 0])
-            # lon = lon.to(self.device)
-            # lat = lat.to(self.device)
+            lon = lon.to(self.device)
+            lat = lat.to(self.device)
 
             input = image
 
@@ -271,8 +270,8 @@ class CodecTester():
             batch_min = input.min()
             batch_max = input.max()
 
-            # sum_lat += lat
-            # sum_lon += lon
+            sum_lat += lat
+            sum_lon += lon
             global_lat_min = min(global_lat_min, lat.item())
             global_lat_max = max(global_lat_max, lat.item())
             global_lon_min = min(global_lon_min, lon.item())
@@ -295,15 +294,15 @@ class CodecTester():
         lon_mean = sum_lon / count_batch
         dataset_std = sum_std / count_batch
 
-        lat_std = (sum_lat_squared_diff / count_batch) ** 0.5
-        lon_std = (sum_lon_squared_diff / count_batch) ** 0.5
+        # lat_std = (sum_lat_squared_diff / count_batch) ** 0.5
+        # lon_std = (sum_lon_squared_diff / count_batch) ** 0.5
 
         print(f"  Dataset-wide Mean: {dataset_mean}")
         print(f"  Dataset-wide Std Dev: {dataset_std}")
         print(f"  Dataset-wide Min: {global_min}")
         print(f"  Dataset-wide Max: {global_max}")
-        print(f"  Lat Std: {lat_std}")
-        print(f"  Lon Std: {lon_std}")
+        print(f"  Lat Std: {lat_mean}")
+        print(f"  Lon Std: {lon_mean}")
         print("Finished computing dataset-wide statistics.")
 
             
@@ -317,7 +316,7 @@ class CodecTester():
             print("Flag: Range of pixel values might not be suitable for visualising, Max is: " + str(image.max()))
         
         if self.bands > 3:
-            image=image.squeeze()[1:3]
+            image=image.squeeze()[1:4]
         else:
             image=image.squeeze()
 

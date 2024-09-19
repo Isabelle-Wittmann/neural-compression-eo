@@ -1,9 +1,10 @@
 dataset:
   name: BigEarthNet
   bands: [1,2,3] 
-  subset_size: 100000
+  subset_size: 10000
   subset_size_test: 500
   subset_size_val: 500
+  prefilter: True
 
 dataloader:
   batch_size: 32
@@ -14,14 +15,14 @@ dataloader:
 compressai_model:
  pretrained: True
  quality: 6
- N: 192 
- M: 320
+ N: 64 
+ M: 8
  V: 8
 
 preprocessing:
-  coordinate_encoding: 'season' # embedding
-  coordinate_num_bins: 100
-  coordinate_embedding_dim: 64
+  coordinate_encoding: 'sincos' # embedding
+  coordinate_num_bins: 40
+  coordinate_embedding_dim: 3
 
 training:
   lmbda: 0.25 #Bit-rate distortion parameter 
@@ -29,7 +30,7 @@ training:
   optim: "Adam"
   lr_aux: 0.0001
   optim_aux: "Adam"
-  epochs: 50
+  epochs: 100
   clip_max_norm: 1.0
   
 randomseed: 2345

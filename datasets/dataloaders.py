@@ -8,8 +8,10 @@ from .multiearth_loader import *
 
 def initialize_dataloaders(cfg, cfg_data):
     if cfg['dataset']['name'] == 'BigEarthNet':
+        if cfg['dataset'].get('prefilter') is None:
+            cfg['dataset']['prefilter'] = False
 
-        dataset, max_val = init_bigearthnet(cfg_path = cfg_data, bands = cfg['dataset']['bands'])
+        dataset, max_val = init_bigearthnet(cfg_path = cfg_data, bands = cfg['dataset']['bands'], prefilter = cfg['dataset']['prefilter'])
 
         train_set =  np.random.choice(len(dataset), cfg['dataset']['subset_size'], replace=False)
         test_set = np.random.choice(len(dataset), cfg['dataset']['subset_size_test'], replace=False)

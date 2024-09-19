@@ -19,7 +19,6 @@ class CompressionModelBase(CompressionModel):
         self.V = cfg['compressai_model']['V']
         self.embedding_size = cfg['preprocessing']['coordinate_embedding_dim']
 
-
         self.entropy_bottleneck = EntropyBottleneck(entropy_channels)
         self.input_channels = input_channels
 
@@ -37,12 +36,12 @@ class CompressionModelBase(CompressionModel):
         y_strings = self.entropy_bottleneck.compress(y)
         return {"strings": [y_strings], "shape": y.size()[-2:]}
 
-    def decompress_common(self, strings, shape, crs):
+    def decompress_common(self, strings, shape):
         y_hat = self.entropy_bottleneck.decompress(strings[0], shape)
         x_hat = self.g_s(y_hat).clamp_(0, 1)
         return {"x_hat": x_hat}
     
-    def embedding(self, x):
+    def embedding(self, x, crs=None, date=None):
         y = self.g_a(x)
         y_hat, y_likelihoods = self.entropy_bottleneck(y)
         return y, y_hat, self.entropy_bottleneck._quantized_cdf
@@ -68,29 +67,58 @@ class FactorizedPriorBase(CompressionModelBase):
             GDN(self.N, inverse=True),
             deconv(self.N, self.N),
             GDN(self.N, inverse=True),
-            deconv(self.N, input_channels),
+            deconv(self.N, 3),
         ])
+
+    def measure_channel_influence(self):
+
+        first_conv_weights = self.g_a[0].weight  
+        channel_influence = torch.sum(torch.abs(first_conv_weights), dim=[0, 2, 3]) 
+        normalized_influence = channel_influence / torch.sum(channel_influence)
+        
+        return normalized_influence
 
     @property
     def downsampling_factor(self) -> int:
         return 2 ** 4
 
-    def forward(self, x, v=None, crs=None):
-        y = self.g_a(x)
+    def forward(self, x, crs=None, date=None):
+        y = self.g_a(x) 
         y_hat, y_likelihoods = self.entropy_bottleneck(y)
         return self.forward_common(x, y_hat, y_likelihoods)
 
-    def compress(self, x, v=None, crs=None):
-        y = self.g_a(x)
+    def compress(self, x, crs=None, date=None):
+        y = self.g_a(x) 
         return self.compress_common(y)
 
-    def decompress(self, strings, shape, crs):
-        return self.decompress_common(strings, shape, crs)
+    def decompress(self, strings, shape, crs, date):
+        return self.decompress_common(strings, shape)
 
 
 class FactorizedPrior(FactorizedPriorBase):
     def __init__(self, cfg, **kwargs):
         super().__init__(cfg, input_channels=3, entropy_channels=cfg['compressai_model']['M'], **kwargs)
+
+class FactorizedPriorOne(FactorizedPriorBase):
+    def __init__(self, cfg, **kwargs):
+        super().__init__(cfg, input_channels=1, entropy_channels=cfg['compressai_model']['M'], **kwargs)
+    
+    def forward(self, x, crs=None, date=None):
+        y = self.g_a(x[:,0].unsqueeze(1))
+        y_hat, y_likelihoods = self.entropy_bottleneck(y)
+        return self.forward_common(x, y_hat, y_likelihoods)
+
+    def compress(self, x, crs=None, date=None):
+        y = self.g_a(x[:,0].unsqueeze(1))
+        return self.compress_common(y)
+
+    def decompress(self, strings, shape, crs, date):
+        return self.decompress_common(strings, shape)
+
+    def embedding(self, x, crs=None, date=None):
+        y = self.g_a(x[:,0].unsqueeze(1))
+        y_hat, y_likelihoods = self.entropy_bottleneck(y)
+        return y, y_hat, self.entropy_bottleneck._quantized_cdf
 
 class FactorizedPriorBaseSlim(CompressionModelBase):
     def __init__(self, cfg, input_channels, **kwargs):
@@ -112,17 +140,17 @@ class FactorizedPriorBaseSlim(CompressionModelBase):
     def downsampling_factor(self) -> int:
         return 2 ** 4
 
-    def forward(self, x, v=None, crs=None):
+    def forward(self, x, crs=None, date=None):
         y = self.g_a(x)
         y_hat, y_likelihoods = self.entropy_bottleneck(y)
         return self.forward_common(x, y_hat, y_likelihoods)
 
-    def compress(self, x, v=None, crs=None):
+    def compress(self, x, crs=None, date=None):
         y = self.g_a(x)
         return self.compress_common(y)
 
-    def decompress(self, strings, shape, crs):
-        return self.decompress_common(strings, shape, crs)
+    def decompress(self, strings, shape, crs, date):
+        return self.decompress_common(strings, shape)
 
 
 class FactorizedPriorSlim(FactorizedPriorBaseSlim):
@@ -157,7 +185,7 @@ class ScaleHyperpriorBase(FactorizedPriorBase):
 
         self.gaussian_conditional = GaussianConditional(None)
 
-    def forward(self, x, v=None, crs=None):
+    def forward(self, x, crs=None, date=None):
         y = self.g_a(x)
         z = self.h_a(torch.abs(y))
         z_hat, z_likelihoods = self.entropy_bottleneck(z)
@@ -165,7 +193,7 @@ class ScaleHyperpriorBase(FactorizedPriorBase):
         y_hat, y_likelihoods = self.gaussian_conditional(y, scales_hat)
         return {"x_hat": self.g_s(y_hat), "likelihoods": {"y": y_likelihoods, "z": z_likelihoods}}
 
-    def compress(self, x, v=None, crs=None):
+    def compress(self, x, crs=None, date=None):
         y = self.g_a(x)
         z = self.h_a(torch.abs(y))
         z_strings = self.entropy_bottleneck.compress(z)
@@ -175,7 +203,7 @@ class ScaleHyperpriorBase(FactorizedPriorBase):
         y_strings = self.gaussian_conditional.compress(y, indexes)
         return {"strings": [y_strings, z_strings], "shape": z.size()[-2:]}
 
-    def decompress(self, strings, shape, crs):
+    def decompress(self, strings, shape, crs, date):
         z_hat = self.entropy_bottleneck.decompress(strings[1], shape)
         scales_hat = self.h_s(z_hat)
         indexes = self.gaussian_conditional.build_indexes(scales_hat)
@@ -206,7 +234,7 @@ class MeanScaleHyperprior(ScaleHyperpriorBase):
             conv(self.M * 3 // 2, self.M * 2, stride=1, kernel_size=3),
         )
 
-    def forward(self, x, v=None, crs=None):
+    def forward(self, x, crs=None, date=None):
         y = self.g_a(x)
         z = self.h_a(y)
         z_hat, z_likelihoods = self.entropy_bottleneck(z)
@@ -220,7 +248,7 @@ class MeanScaleHyperprior(ScaleHyperpriorBase):
             "likelihoods": {"y": y_likelihoods, "z": z_likelihoods},
         }
 
-    def compress(self, x, v=None, crs=None):
+    def compress(self, x, crs=None, date=None):
         y = self.g_a(x)
         z = self.h_a(y)
         z_strings = self.entropy_bottleneck.compress(z)
@@ -231,7 +259,7 @@ class MeanScaleHyperprior(ScaleHyperpriorBase):
         y_strings = self.gaussian_conditional.compress(y, indexes, means=means_hat)
         return {"strings": [y_strings, z_strings], "shape": z.size()[-2:]}
 
-    def decompress(self, strings, shape, crs):
+    def decompress(self, strings, shape, crs, date):
         z_hat = self.entropy_bottleneck.decompress(strings[1], shape)
         gaussian_params = self.h_s(z_hat)
         scales_hat, means_hat = gaussian_params.chunk(2, 1)

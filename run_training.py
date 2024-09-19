@@ -25,6 +25,9 @@ if __name__ == '__main__':
     parser.add_argument('-m', '--model', type=str)
     parser.add_argument('-v', '--version', type=str)
     parser.add_argument('-c', '--config', type=str, help="Path to the config file")
+    parser.add_argument('-mdim', '--mdim', type=int)
+    parser.add_argument('-ndim', '--ndim', type=int)
+    parser.add_argument('-lmbda', '--lmbda', type=float)
     args = parser.parse_args()
 
     if args.version == 'new':
@@ -33,12 +36,21 @@ if __name__ == '__main__':
         
     else:
         model_name = f"{args.model}_v{args.version}"
-        
+
     if args.config:
         CONFIG = os.path.join(current_dir, args.config + '.yaml')
 
     with open(CONFIG, 'r') as f:
         cfg = yaml.safe_load(f)
+    
+    if args.mdim:
+        cfg['compressai_model']['M'] = args.mdim
+    
+    if args.ndim:
+        cfg['compressai_model']['N'] = args.ndim
+
+    if args.lmbda:
+        cfg['training']['lmbda'] = args.lmbda
 
     os.environ['DATA_DIR'] = DATA_DIR
 
