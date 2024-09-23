@@ -1,10 +1,10 @@
 dataset:
   name: BigEarthNet
   bands: [1,2,3] 
-  subset_size: 10000
-  subset_size_test: 500
-  subset_size_val: 500
-  prefilter: True
+  subset_size: 2500
+  subset_size_test: 125 #400
+  subset_size_val: 100 #500
+  prefilter: finland #summer-finlandwinter-finlandspring-finlandfall #finland-portugal #finlandsummer-finlandwinter-finlandspring-finlandfall
 
 dataloader:
   batch_size: 32
